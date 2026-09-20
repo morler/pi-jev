@@ -6,3 +6,7 @@ dist/
 !.env.example
 *.log
 npm-debug.log*
+
+# Pi local state: extension caches, session files, and judge outputs.
+# .pi/settings.json stays tracked; use `git add -f` for other shared Pi config.
+.pi/
