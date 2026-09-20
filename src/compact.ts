@@ -2,7 +2,7 @@ import * as path from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { noulProbability, type JevClient } from "./jev.js";
 import { isJsonObject, isTruthy, readJsonObject, writeJson } from "./config.js";
-import { MAX_TEXT_CHARS, keptText, needsJudgement, rawTextOf, scoreKeyOf, textOf, truncateHead } from "./messages.js";
+import { MAX_TEXT_CHARS, clip, keptText, needsJudgement, rawTextOf, scoreKeyOf, shortHash, textOf, truncateHead } from "./messages.js";
 import { pairCalls, type Decision } from "./prune.js";
 
 export interface CompactResult {
@@ -14,7 +14,8 @@ export interface CompactResult {
   skipped?: "disabled" | "unconfigured" | "empty" | "error";
 }
 
-type ScoreRecord = { keep: number; at: string };
+/** A frozen judgement: the score, when it was taken, and the goal it was taken against. */
+type ScoreRecord = { keep: number; at: string; goal: string };
 type Candidate = { message: any; index: number; judge: boolean; hash: string };
 type Config = {
   keepThreshold: number;
@@ -47,6 +48,9 @@ const DEFAULTS: Config = {
   prune: true,
 };
 
+/** Room a request must leave for questions beyond the state it carries. */
+const QUESTION_HEADROOM = 1000;
+
 /** JEV_COMPACT_* overrides; an unparsable value keeps the default. */
 function compactSettings(): Config {
   const num = (name: string, fallback: number): number => {
@@ -60,13 +64,19 @@ function compactSettings(): Config {
     const raw = process.env[name];
     return raw === undefined || raw.trim() === "" ? fallback : isTruthy(raw);
   };
+  const keepThreshold = num("JEV_COMPACT_KEEP", DEFAULTS.keepThreshold);
+  const maxStateTokens = num("JEV_COMPACT_MAXSTATE", DEFAULTS.maxStateTokens);
   return {
-    keepThreshold: num("JEV_COMPACT_KEEP", DEFAULTS.keepThreshold),
-    dropThreshold: num("JEV_COMPACT_DROP", DEFAULTS.dropThreshold),
+    keepThreshold,
+    // An inverted pair would empty the truncate band, so messages would jump from keep straight to
+    // drop with no indication.
+    dropThreshold: Math.min(num("JEV_COMPACT_DROP", DEFAULTS.dropThreshold), keepThreshold),
     headChars: num("JEV_COMPACT_HEAD", DEFAULTS.headChars),
     recentMessages: num("JEV_COMPACT_RECENT", DEFAULTS.recentMessages),
-    maxStateTokens: num("JEV_COMPACT_MAXSTATE", DEFAULTS.maxStateTokens),
-    maxRequestTokens: num("JEV_COMPACT_MAXREQ", DEFAULTS.maxRequestTokens),
+    maxStateTokens,
+    // A request budget at or below the state budget leaves no room for questions, which would fan out
+    // to one request per candidate.
+    maxRequestTokens: Math.max(num("JEV_COMPACT_MAXREQ", DEFAULTS.maxRequestTokens), maxStateTokens + QUESTION_HEADROOM),
     timeoutMs: num("JEV_COMPACT_TIMEOUT", DEFAULTS.timeoutMs),
     breakerMs: num("JEV_COMPACT_BREAKER", DEFAULTS.breakerMs),
     cacheTtlMs: num("JEV_COMPACT_TTL", DEFAULTS.cacheTtlMs),
@@ -76,9 +86,23 @@ function compactSettings(): Config {
 }
 
 /** Schedule knobs the extension needs: when a refresh is free, and how often to judge. */
-export function pruneSchedule(): { enabled: boolean; cacheTtlMs: number; minGapMs: number; headChars: number } {
+export function pruneSchedule(): {
+  enabled: boolean;
+  cacheTtlMs: number;
+  minGapMs: number;
+  headChars: number;
+  keepThreshold: number;
+  dropThreshold: number;
+} {
   const c = compactSettings();
-  return { enabled: c.prune, cacheTtlMs: c.cacheTtlMs, minGapMs: c.minGapMs, headChars: c.headChars };
+  return {
+    enabled: c.prune,
+    cacheTtlMs: c.cacheTtlMs,
+    minGapMs: c.minGapMs,
+    headChars: c.headChars,
+    keepThreshold: c.keepThreshold,
+    dropThreshold: c.dropThreshold,
+  };
 }
 
 /** Rough token estimate — about six letters, half a token per digit, one per other symbol. */
@@ -126,19 +150,55 @@ function prunableWindow(length: number, c: Config): { from: number; to: number }
   return { from: 1, to: Math.max(1, length - c.recentMessages) };
 }
 
-/** The task Jev judges against: the last few user prompts, or an explicit override. */
-function inferGoal(messages: any[]): string {
+/** Past this length a "goal" is a pasted document, not a task description. */
+const MAX_GOAL_CHARS = 600;
+
+/**
+ * The task Jev judges against: an explicit focus, else JEV_COMPACT_GOAL, else the last few user
+ * prompts. Every caller derives it here, so a score frozen by one path is found by the other.
+ */
+function inferGoal(messages: any[], override?: string): string {
   const prompts = messages
     .filter((message) => message?.role === "user")
     .map((message) => rawTextOf(message))
     .filter(Boolean)
     .slice(-3);
-  return process.env.JEV_COMPACT_GOAL?.trim() || prompts.join(" | ") || ONGOING;
+  const goal = override?.trim() || process.env.JEV_COMPACT_GOAL?.trim() || prompts.join(" | ") || ONGOING;
+  // The goal rides along in every state and fitState never shrinks it, so one pasted file would
+  // otherwise blow the state budget on its own.
+  return clip(goal, MAX_GOAL_CHARS);
+}
+
+/** The messages of a branch, for goal inference and judging. */
+export function branchMessagesOf(entries: any[]): any[] {
+  return (entries ?? []).filter((entry) => entry?.message).map((entry) => entry.message);
 }
 
 /** Score cache beside the session state; keyed by content hash so message positions never matter. */
 function sidecarPath(cwd: string): string {
   return path.join(cwd, ".pi", "pi-jev.compact.json");
+}
+
+/**
+ * The cache key for a goal. A judgement is only valid for the goal it was taken against: the task is
+ * part of the question. Exported so a caller can build the key the same way.
+ */
+export function goalKey(goal: string): string {
+  return shortHash(goal);
+}
+
+/** The frozen score for a message under this goal, or undefined when there is none to reuse. */
+function frozenScore(scores: Record<string, ScoreRecord>, hash: string, goal: string): number | undefined {
+  const record = scores[hash];
+  return record && record.goal === goalKey(goal) ? record.keep : undefined;
+}
+
+/** Scores older than this are dropped on write; a message that stale is simply judged again. */
+const SCORE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+function evictStale(scores: Record<string, ScoreRecord>): Record<string, ScoreRecord> {
+  const cutoff = Date.now() - SCORE_TTL_MS;
+  return Object.fromEntries(Object.entries(scores).filter(([, record]) => Date.parse(record.at) >= cutoff));
 }
 
 function loadScores(cwd: string): Record<string, ScoreRecord> {
@@ -149,7 +209,8 @@ function loadScores(cwd: string): Record<string, ScoreRecord> {
 
 function saveScores(cwd: string, scores: Record<string, ScoreRecord>): void {
   try {
-    writeJson(sidecarPath(cwd), { scores });
+    // Evict on write: nothing else bounds the cache, and every reader parses the whole file.
+    writeJson(sidecarPath(cwd), { scores: evictStale(scores) });
   } catch {
     // Unwritable cache: judging still works, freezing just does not persist.
   }
@@ -263,7 +324,10 @@ export class JevCompactor {
     c: Config
   ): Promise<Record<string, ScoreRecord>> {
     const scores = loadScores(cwd);
-    const fresh = Date.now() < this.breakerUntil ? [] : candidates.filter((item) => item.judge && !(item.hash in scores));
+    const fresh =
+      Date.now() < this.breakerUntil
+        ? []
+        : candidates.filter((item) => item.judge && frozenScore(scores, item.hash, goal) === undefined);
     if (fresh.length === 0) return scores;
 
     const { state, tokens, included } = fitState(candidates, goal, c.maxStateTokens);
@@ -281,6 +345,7 @@ export class JevCompactor {
     );
 
     const at = new Date().toISOString();
+    const answered: Record<string, ScoreRecord> = {};
     for (let i = 0; i < batches.length; i++) {
       const batch = batches[i] ?? [];
       for (const item of batch) {
@@ -288,13 +353,16 @@ export class JevCompactor {
         // back to 0, which is indistinguishable from a real 0 and would drop history. An unanswered
         // message stays uncached and is therefore kept verbatim.
         const value = noulProbability(responses[i]?.answers[`keep_${item.hash}`]?.raw);
-        if (value !== null) scores[item.hash] = { keep: value, at };
+        if (value !== null) answered[item.hash] = { keep: value, at, goal: goalKey(goal) };
       }
     }
-    saveScores(cwd, scores);
+    // Merge into a freshly read cache: a reset or an overlapping pass can land during the round-trips,
+    // and writing back the snapshot taken before them would clobber it.
+    const merged = { ...loadScores(cwd), ...answered };
+    saveScores(cwd, merged);
     this.failStreak = 0;
     this.breakerUntil = 0;
-    return scores;
+    return merged;
   }
 
   /** The compaction summary Pi substitutes for the messages it is about to discard. */
@@ -308,8 +376,11 @@ export class JevCompactor {
     if (candidates.length === 0) return { ...off, skipped: "empty" };
 
     const cwd = ctx?.cwd ?? process.cwd();
+    // Derive the goal from the whole branch, exactly as judge/planPrune do, so the two paths share
+    // scores instead of invalidating each other.
+    const goal = inferGoal(branchMessagesOf(event?.branchEntries), event.customInstructions);
     try {
-      const scores = await this.scoreInto(candidates, event.customInstructions ?? ONGOING, cwd, event.signal, c);
+      const scores = await this.scoreInto(candidates, goal, cwd, event.signal, c);
 
       const lines: string[] = [];
       let kept = 0;
@@ -318,7 +389,7 @@ export class JevCompactor {
       for (const item of candidates) {
         // Unscored means unjudged: kept verbatim rather than dropped on the strength of a score we
         // do not have.
-        const decision: Decision = item.judge ? decide(scores[item.hash]?.keep ?? 1, c) : "keep";
+        const decision: Decision = item.judge ? decide(frozenScore(scores, item.hash, goal) ?? 1, c) : "keep";
         if (decision === "drop") {
           dropped++;
           continue;
@@ -371,6 +442,7 @@ export class JevCompactor {
   public planPrune(messages: any[], cwd: string, activeRun: boolean): Map<string, Decision> {
     const c = compactSettings();
     const scores = loadScores(cwd);
+    const goal = inferGoal(messages);
     const { from, to } = prunableWindow(messages.length, c);
 
     const decisions = new Map<string, Decision>();
@@ -378,7 +450,7 @@ export class JevCompactor {
       // callIndex is never past resultIndex, so the two checks protect both ends of the pair.
       const position = pair.resultIndex ?? pair.callIndex;
       if (pair.callIndex < from || position >= to) continue;
-      const decision = decide(scores[pair.scoreKey]?.keep ?? 1, c);
+      const decision = decide(frozenScore(scores, pair.scoreKey, goal) ?? 1, c);
       // While an agent run is live a dropped call would break the causal chain the model is
       // following; it stays as a truncated breadcrumb until the next checkpoint after the run.
       const effective = activeRun && decision === "drop" ? "truncate" : decision;

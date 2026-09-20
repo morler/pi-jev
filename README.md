@@ -153,7 +153,7 @@ Execution is asynchronous; completion is reported back into the session. Automat
 
 `/jev compact on` enables Jev-guided compaction. Every message Pi is about to discard (`preparation.messagesToSummarize`) is scored by Jev, and the score picks one of three bands: **keep** (its text in the custom summary, with a marker when it was longer than the per-message cap), **truncate** (head plus a re-run marker naming how much was dropped), or **drop** (absent from the summary). Nothing is shortened silently. User prose is intent and is never dropped. The feature preserves Pi's `firstKeptEntryId` boundary and falls back to Pi's built-in summary when Jev is unconfigured, fails, or returns unusable data. It does not silently truncate context.
 
-Scores are frozen by content hash in `.pi/pi-jev.compact.json` (gitignored), so an unchanged message is never judged twice and a re-compaction costs nothing. Tune the bands with environment variables:
+Scores are frozen by content hash in `.pi/pi-jev.compact.json` (gitignored), keyed by the message **and the goal it was judged against**: an unchanged message under the same task is never judged twice, while a different task is judged again, because the task is part of the question. Records older than a week are dropped when the cache is written. Tune the bands with environment variables:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -171,6 +171,8 @@ Scores are frozen by content hash in `.pi/pi-jev.compact.json` (gitignored), so 
 | `JEV_COMPACT_GOAL` | last 3 user prompts | fixed task description sent to Jev |
 
 An unparsable value keeps the default. Deleting the score file only forces re-judging.
+
+Two inversions are corrected rather than obeyed: `JEV_COMPACT_DROP` is clamped to `JEV_COMPACT_KEEP` (a drop band above the keep band would be unreachable, silently emptying the truncate band), and `JEV_COMPACT_MAXREQ` is raised above `JEV_COMPACT_MAXSTATE` (a request budget at or below the state budget leaves no room for questions and fans a pass out to one request per message). `/jev compact status` prints the effective bands.
 
 Long histories stay inside those ceilings rather than failing: the state is re-extracted with shorter per-message text until it fits `JEV_COMPACT_MAXSTATE` (past the smallest cap the oldest messages are left out of the state, never out of the decision), and the questions are split across requests so state + questions fits `JEV_COMPACT_MAXREQ`. Every request is bounded by `JEV_COMPACT_TIMEOUT`, and two consecutive failures pause judging for `JEV_COMPACT_BREAKER` — during that pause compaction still runs, keeping every message verbatim because an unscored message is never dropped.
 

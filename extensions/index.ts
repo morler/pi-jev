@@ -7,7 +7,7 @@ import { AutoJev } from "../src/auto.js";
 import { registerJevTools } from "../src/tools.js";
 import { registerJevCommands, type PruneControl } from "../src/commands.js";
 import { AutoModelRouter } from "../src/model-router.js";
-import { JevCompactor, pruneSchedule } from "../src/compact.js";
+import { JevCompactor, branchMessagesOf, pruneSchedule } from "../src/compact.js";
 import { applyPrune, cancelThresholdCompaction, realContextBoundary, reconcilePressure, type ContextBoundary, type Decision, type PressureState } from "../src/prune.js";
 import { AgentOrchestrator } from "../src/orchestrator.js";
 import { JevAgentHandler } from "../src/agent.js";
@@ -61,12 +61,14 @@ export default function (pi: ExtensionAPI) {
   const agentHandler = new JevAgentHandler(pi, jevClient);
   agentHandler.install();
 
-  /** Save a runtime toggle so the next Pi session starts the same way. */
-  const persistSwitch = (key: JevConfigKey, value: boolean): void => {
+  /** Save a runtime toggle so the next Pi session starts the same way. Reports whether it stuck. */
+  const persistSwitch = (key: JevConfigKey, value: boolean): boolean => {
     try {
       saveConfig({ [key]: value });
+      return true;
     } catch {
       // Unwritable config dir: keep the in-session toggle rather than failing the command.
+      return false;
     }
   };
 
@@ -75,6 +77,10 @@ export default function (pi: ExtensionAPI) {
   // messages change, and it refreshes its decisions only at a checkpoint where a prefix-cache miss
   // is already paid or free. Between checkpoints the same decisions are re-applied, so the prompt
   // prefix stays byte-stable.
+  //
+  // These helpers reach pi's payloads through `any` on purpose: the host types are not usable here,
+  // and they are called with both an ExtensionContext and the narrower PruneContext, so the common
+  // shape is structural rather than a shared SDK type.
   let lastResponseAt = 0;
   let noCacheStreak = 0;
   let activeRun = false;
@@ -85,10 +91,10 @@ export default function (pi: ExtensionAPI) {
   const pruningOn = (schedule = pruneSchedule()): boolean =>
     compactor.enabled && schedule.enabled && jevClient.isConfigured();
 
-  const branchMessages = (ctx: any): any[] =>
-    (ctx?.sessionManager?.getBranch?.() ?? [])
-      .filter((entry: any) => entry?.message)
-      .map((entry: any) => entry.message);
+  /** Consecutive turns with no cache read and no cache write: the provider never writes cache. */
+  const NO_CACHE_STREAK = 3;
+
+  const branchMessages = (ctx: any): any[] => branchMessagesOf(ctx?.sessionManager?.getBranch?.() ?? []);
 
   // Pi's own compaction settings sit behind SettingsManager, reachable only at runtime. Failing to
   // load them just means no pressure path: the cold and no-cache checkpoints still work.
@@ -121,7 +127,12 @@ export default function (pi: ExtensionAPI) {
         reserveTokens = 0;
       }
     }
-    const usage = ctx?.getContextUsage?.();
+    let usage: { tokens?: number | null; contextWindow?: number } | undefined;
+    try {
+      usage = ctx?.getContextUsage?.();
+    } catch {
+      usage = undefined; // unknown usage: the boundary stays unknown, so nothing acts on it
+    }
     return realContextBoundary({
       tokens: usage?.tokens,
       contextWindow: usage?.contextWindow ?? ctx?.model?.contextWindow,
@@ -134,9 +145,10 @@ export default function (pi: ExtensionAPI) {
       const schedule = pruneSchedule();
       return [
         `Jev in-place pruning: ${pruningOn() ? "on" : "off"}${schedule.enabled ? "" : " (JEV_COMPACT_PRUNE=0)"}`,
-        `Pressure: ${pressure} · agent run: ${activeRun ? "active" : "idle"} · no-cache streak: ${noCacheStreak}/3`,
+        `Pressure: ${pressure} · agent run: ${activeRun ? "active" : "idle"} · no-cache streak: ${noCacheStreak}/${NO_CACHE_STREAK}`,
         `Pending changes: ${applied?.size ?? 0} · last judged: ${lastJudgeAt ? new Date(lastJudgeAt).toISOString() : "never"}`,
-        `Cache TTL: ${schedule.cacheTtlMs}ms · judge gap: ${schedule.minGapMs}ms · head: ${schedule.headChars} chars`,
+        `Bands: keep >= ${schedule.keepThreshold} · truncate >= ${schedule.dropThreshold} · head ${schedule.headChars} chars`,
+        `Cache TTL: ${schedule.cacheTtlMs}ms · judge gap: ${schedule.minGapMs}ms`,
       ].join("\n");
     },
 
@@ -168,7 +180,7 @@ export default function (pi: ExtensionAPI) {
   };
 
   registerJevTools(pi, jevClient, router, skillRouter);
-  registerJevCommands(pi, jevClient, router, skillRouter, auto, autoModel, compactor, agents, persistSwitch, pruneControl);
+  registerJevCommands(pi, jevClient, skillRouter, auto, autoModel, compactor, agents, persistSwitch, pruneControl);
 
   pi.registerTool({
     name: "jev_compact_now",
@@ -235,11 +247,15 @@ export default function (pi: ExtensionAPI) {
       // A zero cacheRead is not on its own a signal: right after a cache write it reads 0.
       noCacheStreak = (usage.cacheRead ?? 0) === 0 && (usage.cacheWrite ?? 0) === 0 ? noCacheStreak + 1 : 0;
     }
-    pressure = reconcilePressure(pressure, (await boundary(ctx)).overCeiling);
+    // Nothing consumes the pressure state while pruning is off, and reading the boundary costs a
+    // settings lookup.
+    if (pruningOn()) pressure = reconcilePressure(pressure, (await boundary(ctx)).overCeiling);
   });
 
   pi.on("after_provider_response", (event, ctx) => {
-    lastResponseAt = Date.now();
+    // Only a served request re-caches the prefix: counting a failure would postpone the next cold
+    // checkpoint by a whole TTL, stalling pruning after provider errors.
+    if (event.status < 400) lastResponseAt = Date.now();
     const kind = autoModel.recordProviderResponse(event.status, ctx.model);
     if (kind) ctx.ui.setStatus("jev", `jev: ${kind} → fallback next prompt`);
   });
@@ -252,7 +268,7 @@ export default function (pi: ExtensionAPI) {
     // A refresh changes the prompt prefix, which costs a full-prefix cache miss. Wait for a
     // checkpoint where that miss is already paid (stale cache) or free: a provider that writes no
     // cache, or usage past Pi's own ceiling, where the next request misses anyway.
-    const noCache = noCacheStreak >= 3;
+    const noCache = noCacheStreak >= NO_CACHE_STREAK;
     const cold = lastResponseAt === 0 || Date.now() - lastResponseAt > schedule.cacheTtlMs;
     const bypass = !cold && !noCache && pressure === "armed" && (await boundary(ctx)).overCeiling === true;
 

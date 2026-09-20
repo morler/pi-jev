@@ -2,11 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { registerJevCommands } from "../src/commands.js";
 import type { JevClient } from "../src/jev.js";
-import type { ToolRouter } from "../src/router.js";
 import type { SkillRouter } from "../src/skills.js";
 import type { AutoJev } from "../src/auto.js";
 
-function harness(designed: unknown, answers: Record<string, any> = {}, prune?: any) {
+function harness(designed: unknown, answers: Record<string, any> = {}, prune?: any, persistResult = true) {
   let handler: ((args: string, ctx: any) => Promise<void>) | undefined;
   const saved: Array<{ key: string; value: boolean }> = [];
   let activeTools = ["read"];
@@ -50,7 +49,6 @@ function harness(designed: unknown, answers: Record<string, any> = {}, prune?: a
   registerJevCommands(
     pi,
     jevClient,
-    {} as ToolRouter,
     {} as SkillRouter,
     auto as unknown as AutoJev,
     undefined,
@@ -58,6 +56,7 @@ function harness(designed: unknown, answers: Record<string, any> = {}, prune?: a
     undefined,
     (key: string, value: boolean) => {
       saved.push({ key, value });
+      return persistResult;
     },
     prune
   );
@@ -200,6 +199,14 @@ test("/jev enable and /jev disable only touch this extension's tools", async () 
 
   await run("disable");
   assert.deepEqual(active(), ["read"]);
+});
+
+test("/jev toggles admit when the config file could not be written", async () => {
+  const { run, calls } = harness(undefined, {}, undefined, false);
+
+  await run("compact on");
+
+  assert.match(calls.at(-1)!.message, /Saved for this session only/, "an unwritable config must not be reported as saved");
 });
 
 test("/jev compact status|reset|now drive the pruning controls", async () => {

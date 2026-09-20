@@ -8,5 +8,7 @@ dist/
 npm-debug.log*
 
 # Pi local state: extension caches, session files, and judge outputs.
-# .pi/settings.json stays tracked; use `git add -f` for other shared Pi config.
-.pi/
+# .pi/settings.json is shared Pi config and stays tracked; use `git add -f` for other shared config.
+# The negation only works because the parent is not excluded wholesale.
+.pi/*
+!.pi/settings.json

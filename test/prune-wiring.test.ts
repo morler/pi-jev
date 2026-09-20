@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import register from "../extensions/index.js";
 import { scoreKeyOf } from "../src/messages.js";
+import { goalKey } from "../src/compact.js";
 
 /**
  * End-to-end checks of the pruning contract: the extension's own wiring, not the pure helpers.
@@ -41,10 +42,19 @@ const user = (text: string) => ({ role: "user", content: text });
 const call = (id: string) => ({ role: "assistant", content: [{ type: "toolCall", id, name: "read", arguments: { q: id } }] });
 const result = (id: string, text: string) => ({ role: "toolResult", toolCallId: id, toolName: "read", content: [{ type: "text", text }], isError: false });
 
+// The compactor keys a frozen score by its goal as well as its message, so every hand-written
+// score names the same goal and the extension is told to judge under it.
+const GOAL = "wiring test goal";
+process.env.JEV_COMPACT_GOAL = GOAL;
+
 const writeScores = (cwd: string, scores: Record<string, number>) =>
   fs.writeFileSync(
     path.join(cwd, ".pi", "pi-jev.compact.json"),
-    JSON.stringify({ scores: Object.fromEntries(Object.entries(scores).map(([key, keep]) => [key, { keep, at: "t" }])) })
+    JSON.stringify({
+      scores: Object.fromEntries(
+        Object.entries(scores).map(([key, keep]) => [key, { keep, at: new Date().toISOString(), goal: goalKey(GOAL) }])
+      ),
+    })
   );
 
 const tempCwd = (prefix: string) => {
@@ -127,6 +137,47 @@ test("usage past Pi's ceiling refreshes the decision set even with a warm cache"
   }).finally(() => {
     if (previous === undefined) delete process.env.JEV_COMPACT_RECENT;
     else process.env.JEV_COMPACT_RECENT = previous;
+  });
+});
+
+
+test("a failed provider response does not count as a served one", async () => {
+  const cwd = tempCwd("pi-jev-failure-");
+  const messages = [user("task"), call("c1"), result("c1", "one"), call("c2"), result("c2", "two"), call("c3"), result("c3", "recent")];
+
+  const previous = process.env.JEV_COMPACT_RECENT;
+  process.env.JEV_COMPACT_RECENT = "2";
+  await withKey(async () => {
+    const { fire, view } = loadExtension(cwd);
+    writeScores(cwd, { [scoreKeyOf(messages[2])]: 0.05, [scoreKeyOf(messages[4])]: 0.9 });
+    const first = await view(messages);
+    assert.equal(first!.length, 5, "c1's pair is gone");
+
+    // A 500 was never served, so its prefix was never re-cached: the cache stays cold.
+    await fire("after_provider_response", { status: 500, headers: {} });
+    writeScores(cwd, { [scoreKeyOf(messages[2])]: 0.05, [scoreKeyOf(messages[4])]: 0.05 });
+    const afterFailure = await view(messages);
+
+    assert.equal(afterFailure!.length, first!.length - 2, "the failed response left the cold checkpoint intact");
+  }).finally(() => {
+    if (previous === undefined) delete process.env.JEV_COMPACT_RECENT;
+    else process.env.JEV_COMPACT_RECENT = previous;
+  });
+});
+
+test("the context hook survives a getContextUsage that throws", async () => {
+  const cwd = tempCwd("pi-jev-usage-");
+
+  await withKey(async () => {
+    const { fire, ctx } = loadExtension(cwd);
+    ctx.getContextUsage = () => {
+      throw new Error("usage unavailable");
+    };
+
+    // An exception here would reject the handler and surface as a broken request instead of fail-open.
+    const out = await fire("context", { messages: [user("task")] });
+    assert.ok(Array.isArray(out), "the context handler resolved");
+    await fire("turn_end", { message: { usage: { cacheRead: 1, cacheWrite: 1 } } });
   });
 });
 

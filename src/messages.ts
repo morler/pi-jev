@@ -16,17 +16,21 @@ export function blocksOf(message: any): any[] {
   return Array.isArray(content) ? content : [];
 }
 
-export function clip(text: string, limit: number): string {
-  return text.length > limit ? `${text.slice(0, limit)}…` : text;
+/** Shorten text to `limit`, or leave it whole when the limit is null. */
+export function clip(text: string, limit: number | null): string {
+  return limit !== null && text.length > limit ? `${text.slice(0, limit)}…` : text;
 }
 
-/** All readable text of a message, unclipped, with tool calls rendered as `name(args)`. */
-export function rawTextOf(message: any): string {
+/** Tool-call arguments are clipped this far in the readable rendering; the score key is not. */
+const ARG_LIMIT = 200;
+
+/** All readable text of a message, with tool calls rendered as `name(args)`. */
+export function rawTextOf(message: any, argLimit: number | null = ARG_LIMIT): string {
   const parts: string[] = [];
   for (const block of blocksOf(message)) {
     if (block?.type === "text" && typeof block.text === "string") parts.push(block.text);
     else if (block?.type === "toolCall") {
-      parts.push(`tool call ${block.name}(${clip(JSON.stringify(block.arguments ?? {}), 200)})`);
+      parts.push(`tool call ${block.name}(${clip(JSON.stringify(block.arguments ?? {}), argLimit)})`);
     }
   }
   const body = parts.join(" ").replace(/\s+/g, " ").trim();
@@ -54,10 +58,16 @@ function hashOf(role: string, text: string): string {
 
 /**
  * The key a score is frozen against, so both paths look up the same score for a message. It hashes
- * the FULL text: clipping first would let an edit past the cap reuse a stale score.
+ * the whole rendering, arguments included: clipping any of it would let an edit past the cap reuse a
+ * stale score, and two calls that differ only deep in their arguments would collide.
  */
 export function scoreKeyOf(message: any): string {
-  return hashOf(message?.role ?? "", rawTextOf(message));
+  return hashOf(message?.role ?? "", rawTextOf(message, null));
+}
+
+/** A short stable hash of arbitrary text, for keys that are not a message identity. */
+export function shortHash(text: string): string {
+  return hashOf("", text);
 }
 
 /** Head of the text plus a marker naming what was dropped; short text is left alone, not annotated. */

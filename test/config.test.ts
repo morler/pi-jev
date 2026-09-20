@@ -51,3 +51,13 @@ test("precedence: env var set at all > saved file > off", () => {
   delete process.env[SWITCHES.auto];
   assert.deepEqual(envOverrides(), []);
 });
+
+test("a hand-edited saved switch is coerced, so \"off\" cannot read as on", () => {
+  const dir = sandbox();
+  for (const env of [SWITCHES.auto, SWITCHES.compact, SWITCHES.agents]) delete process.env[env];
+  fs.writeFileSync(path.join(dir, "pi-jev.json"), JSON.stringify({ auto: "off", compact: "on", agents: 1 }));
+
+  assert.equal(resolveSwitch("auto", loadConfig()), false, '"off" is a truthy string, but it means off');
+  assert.equal(resolveSwitch("compact", loadConfig()), true, '"on" still means on');
+  assert.equal(resolveSwitch("agents", loadConfig()), false, "a non-string, non-boolean reads as off");
+});

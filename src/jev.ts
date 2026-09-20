@@ -22,7 +22,7 @@ import type {
  * here instead — compaction does, because a low score drops history.
  */
 export function noulProbability(rawAnswer: unknown): number | null {
-  const raw = rawAnswer as any;
+  const raw = rawAnswer as { noul?: unknown; probability?: unknown; value?: unknown };
   const value = raw?.noul ?? raw?.probability ?? raw?.value;
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
   if (typeof value === "string" && value.trim() !== "") {

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { JevCompactor } from "../src/compact.js";
+import { JevCompactor, goalKey, pruneSchedule } from "../src/compact.js";
 import type { JevClient } from "../src/jev.js";
 import { scoreKeyOf } from "../src/messages.js";
 
@@ -53,6 +53,9 @@ const result = (id: string, text: string) => ({
 });
 /** Long enough to cross the 300-char truncate head. */
 const long = (marker: string) => `${marker} ${"x".repeat(400)}`;
+
+/** The goal the planPrune fixture freezes its scores under, so the keys line up. */
+const GOAL = "judge the parser fix";
 
 test("JevCompactor keeps judged tool history in the custom summary", async () => {
   const { client, calls } = scoringClient(0.9, 0.9);
@@ -138,8 +141,11 @@ test("JevCompactor does nothing while disabled", async () => {
   assert.equal(outcome.skipped, "disabled");
 });
 test("JevCompactor batches questions across requests without losing or repeating any", async () => {
-  const saved = process.env.JEV_COMPACT_MAXREQ;
-  process.env.JEV_COMPACT_MAXREQ = "2000";
+  const saved = { maxState: process.env.JEV_COMPACT_MAXSTATE, maxReq: process.env.JEV_COMPACT_MAXREQ };
+  // Both budgets are set: a request budget below the state budget is clamped up, so the split has to
+  // come from a state that fits the whole window while the request leaves little room for questions.
+  process.env.JEV_COMPACT_MAXSTATE = "2000";
+  process.env.JEV_COMPACT_MAXREQ = "3000";
   try {
     const { client, calls } = scoringClient(...Array(40).fill(0.9));
     const messages = Array.from({ length: 40 }, (_, i) => result(`c${i}`, `batch output ${i}`));
@@ -153,8 +159,10 @@ test("JevCompactor batches questions across requests without losing or repeating
     assert.equal(outcome.kept, 40);
     assert.equal(outcome.dropped, 0);
   } finally {
-    if (saved === undefined) delete process.env.JEV_COMPACT_MAXREQ;
-    else process.env.JEV_COMPACT_MAXREQ = saved;
+    for (const [name, value] of [["JEV_COMPACT_MAXSTATE", saved.maxState], ["JEV_COMPACT_MAXREQ", saved.maxReq]] as const) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
   }
 });
 
@@ -256,19 +264,18 @@ test("planPrune turns scores into changes, skipping the first message and the re
   ];
   const sidecar = path.join(dir, ".pi", "pi-jev.compact.json");
   fs.mkdirSync(path.dirname(sidecar), { recursive: true });
+  /** A frozen score, keyed exactly the way the compactor keys it: by message AND by goal. */
+  const frozen = (message: any, keep: number) => ({
+    [scoreKeyOf(message)]: { keep, at: new Date().toISOString(), goal: goalKey(GOAL) },
+  });
   fs.writeFileSync(
     sidecar,
-    JSON.stringify({
-      scores: {
-        [scoreKeyOf(messages[4])]: { keep: 0.05, at: "t" },
-        [scoreKeyOf(messages[6])]: { keep: 0.3, at: "t" },
-        [scoreKeyOf(messages[10])]: { keep: 0.05, at: "t" },
-      },
-    })
+    JSON.stringify({ scores: { ...frozen(messages[4], 0.05), ...frozen(messages[6], 0.3), ...frozen(messages[10], 0.05) } })
   );
 
   const compactor = new JevCompactor({ isConfigured: () => true } as unknown as JevClient, true);
   process.env.JEV_COMPACT_RECENT = "2";
+  process.env.JEV_COMPACT_GOAL = GOAL;
   try {
     assert.deepEqual(
       [...compactor.planPrune(messages, dir, false)],
@@ -283,6 +290,7 @@ test("planPrune turns scores into changes, skipping the first message and the re
     );
   } finally {
     delete process.env.JEV_COMPACT_RECENT;
+    delete process.env.JEV_COMPACT_GOAL;
   }
 });
 
@@ -310,6 +318,82 @@ test("judge does nothing while compaction is off", async () => {
   await new JevCompactor(client, false).judge([user("task"), result("c1", "out")], ctx.cwd);
   assert.equal(calls.length, 0);
 });
+
+test("an inverted threshold pair is clamped, and a tiny request budget is raised", async () => {
+  const saved = {
+    keep: process.env.JEV_COMPACT_KEEP,
+    drop: process.env.JEV_COMPACT_DROP,
+    maxState: process.env.JEV_COMPACT_MAXSTATE,
+    maxReq: process.env.JEV_COMPACT_MAXREQ,
+  };
+  process.env.JEV_COMPACT_KEEP = "0.2";
+  process.env.JEV_COMPACT_DROP = "0.9";
+  process.env.JEV_COMPACT_MAXSTATE = "5000";
+  process.env.JEV_COMPACT_MAXREQ = "100";
+  try {
+    const schedule = pruneSchedule();
+    assert.equal(schedule.keepThreshold, 0.2);
+    assert.equal(schedule.dropThreshold, 0.2, "a drop band above the keep band would be unreachable");
+
+    const { client, calls } = scoringClient(...Array(5).fill(0.9));
+    const messages = Array.from({ length: 5 }, (_, i) => result(`c${i}`, `raised budget ${i}`));
+    await new JevCompactor(client, true).compact(compactEvent(messages), { cwd: fs.mkdtempSync(path.join(os.tmpdir(), "pi-jev-budget-")) } as any);
+
+    assert.equal(calls.length, 1, "a request budget below the state budget must not fan out to one call per message");
+  } finally {
+    for (const [name, value] of [
+      ["JEV_COMPACT_KEEP", saved.keep],
+      ["JEV_COMPACT_DROP", saved.drop],
+      ["JEV_COMPACT_MAXSTATE", saved.maxState],
+      ["JEV_COMPACT_MAXREQ", saved.maxReq],
+    ] as const) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+});
+
+test("a score frozen under a different goal is judged again", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-jev-goal-"));
+  const { client, calls } = scoringClient(0.9);
+  const compactor = new JevCompactor(client, true);
+  const event = () => compactEvent([user("task"), result("c1", "goal dependent")]);
+
+  try {
+    process.env.JEV_COMPACT_GOAL = "first task";
+    await compactor.compact(event(), { cwd: dir } as any);
+    await compactor.compact(event(), { cwd: dir } as any);
+    assert.equal(calls.length, 1, "the same goal reuses the frozen score");
+
+    process.env.JEV_COMPACT_GOAL = "second task";
+    await compactor.compact(event(), { cwd: dir } as any);
+    assert.equal(calls.length, 2, "a judgement is not reused under a task it was never taken against");
+  } finally {
+    delete process.env.JEV_COMPACT_GOAL;
+  }
+});
+
+test("stale score records are evicted when the cache is written", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-jev-ttl-"));
+  const sidecar = path.join(dir, ".pi", "pi-jev.compact.json");
+  fs.mkdirSync(path.dirname(sidecar), { recursive: true });
+  fs.writeFileSync(
+    sidecar,
+    JSON.stringify({
+      scores: {
+        ancient: { keep: 0.9, at: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(), goal: goalKey("old") },
+      },
+    })
+  );
+
+  const { client } = scoringClient(0.9);
+  await new JevCompactor(client, true).compact(compactEvent([user("task"), result("c1", "fresh")]), { cwd: dir } as any);
+
+  const scores = JSON.parse(fs.readFileSync(sidecar, "utf8")).scores;
+  assert.equal(scores.ancient, undefined, "a month-old score is dropped on write");
+  assert.equal(Object.keys(scores).length, 1, "the score just taken stays");
+});
+
 
 test("a malformed answer is never frozen as a zero score", async () => {
   for (const junk of [null, "", [], false, {}]) {

@@ -1,6 +1,5 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { JevClient } from "./jev.js";
-import type { ToolRouter } from "./router.js";
 import type { SkillRouter } from "./skills.js";
 import type { AutoJev } from "./auto.js";
 import type { AutoModelRouter } from "./model-router.js";
@@ -16,9 +15,13 @@ import { SWITCHES, configPath, envOverrides, envShadowed, type JevConfigKey } fr
 /** What the in-place pruning controls need from a command or tool context. */
 export interface PruneContext {
   cwd: string;
-  sessionManager: any;
+  /** Only the branch is read, and its entry types are a union with no common shape. */
+  sessionManager: { getBranch?(): unknown[] };
   signal?: AbortSignal;
 }
+
+/** Shown when the extension was loaded without the pruning controls. */
+const PRUNE_UNAVAILABLE = "Jev in-place pruning is not available in this session.";
 
 /** The pruning path, exposed to `/jev compact status|reset|now` and the `jev_compact_now` tool. */
 export interface PruneControl {
@@ -30,13 +33,12 @@ export interface PruneControl {
 export function registerJevCommands(
   pi: ExtensionAPI,
   jevClient: JevClient,
-  router: ToolRouter,
   skillRouter: SkillRouter,
   auto: AutoJev,
   autoModel?: AutoModelRouter,
   compactor?: JevCompactor,
   agents?: AgentOrchestrator,
-  persistSwitch?: (key: JevConfigKey, value: boolean) => void,
+  persistSwitch?: (key: JevConfigKey, value: boolean) => boolean,
   prune?: PruneControl
 ): void {
   const agentMode = agents ?? { enabled: false, setEnabled: () => {}, dispatch: async () => ({ accepted: false, error: "disabled" }) };
@@ -46,7 +48,8 @@ export function registerJevCommands(
   /** Persists a toggle and returns the note to append to the notice. */
   const saveNotice = (key: JevConfigKey, value: boolean): string => {
     if (!persistSwitch) return "";
-    persistSwitch(key, value);
+    // A write failure must not be reported as a save: the toggle then lives in this session only.
+    if (persistSwitch(key, value) === false) return " Saved for this session only (the config file is not writable).";
     // An env var that disagrees with what we just saved wins on the next start: say so now.
     return envShadowed(key, value)
       ? ` Saved, but $${SWITCHES[key]} is set and overrides it.`
@@ -70,6 +73,7 @@ export function registerJevCommands(
         const routable = allTools.filter(
           (t: any) => !activeSet.has(t.name) && !isJevTool(t.name)
         ).length;
+        const overrides = envOverrides();
 
         ctx.ui.notify(
           `Jev Status:\n` +
@@ -82,7 +86,7 @@ export function registerJevCommands(
             `• Jev compaction: ${compactMode.enabled ? "on" : "off"}\n` +
             `• Agent orchestration: ${agentMode.enabled ? "on" : "off"}\n` +
             `• Saved config: ${configPath()}\n` +
-            (envOverrides().length ? `• Env override (wins over saved): ${envOverrides().join(", ")}\n` : "") +
+            (overrides.length ? `• Env override (wins over saved): ${overrides.join(", ")}\n` : "") +
             `• Active tools: ${activeTools.length} / Available: ${allTools.length} (${routable} routable)\n` +
             (jevClient.stats.lastError ? `• Last error: ${jevClient.stats.lastError}` : ""),
           "info"
@@ -208,13 +212,13 @@ export function registerJevCommands(
         const arg = rest.toLowerCase();
 
         if (arg === "status") {
-          ctx.ui.notify(prune?.status() ?? "Jev in-place pruning is not available in this session.", "info");
+          ctx.ui.notify(prune?.status() ?? PRUNE_UNAVAILABLE, "info");
           return;
         }
 
         if (arg === "reset") {
           if (!prune) {
-            ctx.ui.notify("Jev in-place pruning is not available in this session.", "warning");
+            ctx.ui.notify(PRUNE_UNAVAILABLE, "warning");
             return;
           }
           prune.reset(ctx);
@@ -224,10 +228,10 @@ export function registerJevCommands(
 
         if (arg === "now") {
           if (!prune) {
-            ctx.ui.notify("Jev in-place pruning is not available in this session.", "warning");
+            ctx.ui.notify(PRUNE_UNAVAILABLE, "warning");
             return;
           }
-          ctx.ui.notify("Scoring history with Jev and applying the decisions...", "info");
+          // No optimistic progress line: `now` is the only thing that knows whether it will score.
           ctx.ui.notify(await prune.now(ctx), "info");
           return;
         }

@@ -66,7 +66,12 @@ export function saveConfig(patch: JevConfig): JevConfig {
 export function resolveSwitch(key: JevConfigKey, saved: JevConfig): boolean {
   const raw = process.env[SWITCHES[key]];
   if (raw !== undefined) return isTruthy(raw);
-  return saved[key] ?? false;
+  // The file is hand-editable: coerce the way the env path does, so `"compact": "off"` cannot enable a
+  // switch just by being a truthy string while `"on"` still means on.
+  const value = saved[key];
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return isTruthy(value);
+  return false;
 }
 
 /** True when a set env var would override `value` on the next start, so a toggle must say so now. */
