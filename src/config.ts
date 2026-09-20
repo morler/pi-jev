@@ -76,6 +76,11 @@ export function saveConfig(patch: JevConfig): JevConfig {
 export function resolveSwitch(key: JevConfigKey, saved: JevConfig): boolean {
   const raw = process.env[SWITCHES[key]];
   if (raw !== undefined) return isTruthy(raw);
+  return resolveSaved(key, saved);
+}
+
+/** The saved file's value for a switch (coerced), else its built-in default. Env is not consulted. */
+function resolveSaved(key: JevConfigKey, saved: JevConfig): boolean {
   // The file is hand-editable: coerce the way the env path does, so `"compact": "off"` cannot enable a
   // switch just by being a truthy string while "on" still means on.
   const value = saved[key];
@@ -89,9 +94,10 @@ export function envShadowed(key: JevConfigKey, value: boolean): boolean {
   return process.env[SWITCHES[key]] !== undefined && isTruthy(process.env[SWITCHES[key]]) !== value;
 }
 
-/** Env vars currently shadowing the saved switches, for `/jev status`. */
+/** Env vars that actually change a switch from the saved file, for `/jev status`. */
 export function envOverrides(): string[] {
+  const saved = loadConfig();
   return (Object.keys(SWITCHES) as JevConfigKey[]).flatMap((key) =>
-    process.env[SWITCHES[key]] === undefined ? [] : [`$${SWITCHES[key]}`]
+    envShadowed(key, resolveSaved(key, saved)) ? [`$${SWITCHES[key]}`] : []
   );
 }

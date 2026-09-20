@@ -319,7 +319,7 @@ test("judge does nothing while compaction is off", async () => {
   assert.equal(calls.length, 0);
 });
 
-test("an inverted threshold pair is clamped, and a tiny request budget is raised", async () => {
+test("an inverted threshold pair keeps a non-empty truncate band, and a tiny request budget is raised", async () => {
   const saved = {
     keep: process.env.JEV_COMPACT_KEEP,
     drop: process.env.JEV_COMPACT_DROP,
@@ -332,8 +332,9 @@ test("an inverted threshold pair is clamped, and a tiny request budget is raised
   process.env.JEV_COMPACT_MAXREQ = "100";
   try {
     const schedule = pruneSchedule();
-    assert.equal(schedule.keepThreshold, 0.2);
-    assert.equal(schedule.dropThreshold, 0.2, "a drop band above the keep band would be unreachable");
+    assert.equal(schedule.keepThreshold, 0.9, "the higher threshold is the keep band");
+    assert.equal(schedule.dropThreshold, 0.2, "the lower threshold is the drop band");
+    assert.ok(schedule.dropThreshold < schedule.keepThreshold, "the truncate band must not be empty");
 
     const { client, calls } = scoringClient(...Array(5).fill(0.9));
     const messages = Array.from({ length: 5 }, (_, i) => result(`c${i}`, `raised budget ${i}`));
@@ -471,6 +472,45 @@ test("a kept message past the cap says so, and the truncate marker counts the re
   const marker = outcome.summary.match(/\[pi-jev: result truncated, (\d+) chars omitted/);
   assert.ok(marker, "the truncate band keeps its re-run marker");
   assert.ok(Number(marker![1]) > 600, `expected the real omission count, got ${marker![1]}`);
+});
+
+test("a corrupt score record is dropped from the cache, not trusted to drop history", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-jev-corrupt-"));
+  const sidecar = path.join(dir, ".pi", "pi-jev.compact.json");
+  fs.mkdirSync(path.dirname(sidecar), { recursive: true });
+  const message = result("c1", "important output");
+  fs.writeFileSync(
+    sidecar,
+    JSON.stringify({
+      scores: {
+        [scoreKeyOf(message)]: {
+          keep: "not a number",
+          at: new Date().toISOString(),
+          goal: goalKey("Continue the user's ongoing coding task"),
+        },
+      },
+    })
+  );
+
+  const { client, calls } = scoringClient(0.9);
+  const outcome = await new JevCompactor(client, true).compact(compactEvent([user("task"), message]), { cwd: dir } as any);
+
+  assert.equal(outcome.dropped, 0, "a corrupt keep value must not be read as a drop");
+  assert.equal(calls.length, 1, "the message is judged again rather than trusted from the corrupt record");
+});
+
+test("a negative JEV_COMPACT_RECENT falls back to the default instead of exposing the newest", async () => {
+  const previous = process.env.JEV_COMPACT_RECENT;
+  process.env.JEV_COMPACT_RECENT = "-5";
+  try {
+    const messages = [user("task"), ...Array.from({ length: 8 }, (_, i) => result(`c${i}`, `output ${i}`))];
+    const { client, calls } = scoringClient(...Array(8).fill(0.9));
+    await new JevCompactor(client, true).judge(messages, fs.mkdtempSync(path.join(os.tmpdir(), "pi-jev-recent-")));
+    assert.equal(Object.keys(calls[0].questions).length, 2, "the newest six messages stay out of the window");
+  } finally {
+    if (previous === undefined) delete process.env.JEV_COMPACT_RECENT;
+    else process.env.JEV_COMPACT_RECENT = previous;
+  }
 });
 
 

@@ -213,7 +213,11 @@ test("/jev compact status|reset|now drive the pruning controls", async () => {
   const seen: string[] = [];
   const prune = {
     status: () => "pruning on · pressure armed",
-    reset: (ctx: any) => seen.push(`reset ${ctx.cwd}`),
+    counts: () => "Last compaction: 2 kept · 1 trunc · 0 drop",
+    reset: (ctx: any) => {
+      seen.push(`reset ${ctx.cwd}`);
+      return true;
+    },
     now: async (ctx: any) => {
       seen.push(`now ${ctx.cwd}`);
       return "2 dropped · 40 chars saved";
@@ -231,6 +235,25 @@ test("/jev compact status|reset|now drive the pruning controls", async () => {
   await run("compact now");
   assert.deepEqual(seen, ["reset /tmp/pi-jev-project", "now /tmp/pi-jev-project"]);
   assert.equal(calls.at(-1)!.message, "2 dropped · 40 chars saved");
+});
+
+test("/jev status reports the last compaction counts when pruning is available", async () => {
+  const { run, calls } = harness(undefined, {}, { counts: () => "Last compaction: 2 kept · 1 trunc · 0 drop" });
+  await run("status");
+  assert.match(calls.at(-1)!.message, /Last compaction: 2 kept · 1 trunc · 0 drop/);
+});
+
+test("/jev compact reset reports a score cache it could not clear", async () => {
+  const prune = {
+    status: () => "",
+    counts: () => "",
+    reset: () => false,
+    now: async () => "",
+  };
+  const { run, calls } = harness(undefined, {}, prune);
+  await run("compact reset");
+  assert.equal(calls.at(-1)!.level, "warning", "an unwritten cache must not be reported as cleared");
+  assert.match(calls.at(-1)!.message, /could not be written/);
 });
 
 test("/jev compact status|reset|now admit when pruning is unavailable", async () => {

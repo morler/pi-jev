@@ -64,15 +64,22 @@ function compactSettings(): Config {
     const raw = process.env[name];
     return raw === undefined || raw.trim() === "" ? fallback : isTruthy(raw);
   };
-  const keepThreshold = num("JEV_COMPACT_KEEP", DEFAULTS.keepThreshold);
+  // An inverted pair would empty the truncate band, so messages would jump from keep straight to drop
+  // with no indication. Read the two as an unordered pair: the higher value is always the keep band,
+  // which keeps drop below keep and the truncate band reachable.
+  const rawKeep = num("JEV_COMPACT_KEEP", DEFAULTS.keepThreshold);
+  const rawDrop = num("JEV_COMPACT_DROP", DEFAULTS.dropThreshold);
+  const keepThreshold = Math.max(rawKeep, rawDrop);
+  const dropThreshold = Math.min(rawKeep, rawDrop);
   const maxStateTokens = num("JEV_COMPACT_MAXSTATE", DEFAULTS.maxStateTokens);
+  // A negative recent is meaningless: it would expose the newest messages the window promises never
+  // to touch, so it falls back to the default rather than silently disabling the protection.
+  const recent = num("JEV_COMPACT_RECENT", DEFAULTS.recentMessages);
   return {
     keepThreshold,
-    // An inverted pair would empty the truncate band, so messages would jump from keep straight to
-    // drop with no indication.
-    dropThreshold: Math.min(num("JEV_COMPACT_DROP", DEFAULTS.dropThreshold), keepThreshold),
+    dropThreshold,
     headChars: num("JEV_COMPACT_HEAD", DEFAULTS.headChars),
-    recentMessages: num("JEV_COMPACT_RECENT", DEFAULTS.recentMessages),
+    recentMessages: recent >= 0 ? recent : DEFAULTS.recentMessages,
     maxStateTokens,
     // A request budget at or below the state budget leaves no room for questions, which would fan out
     // to one request per candidate.
@@ -154,16 +161,18 @@ function prunableWindow(length: number, c: Config): { from: number; to: number }
 const MAX_GOAL_CHARS = 600;
 
 /**
- * The task Jev judges against: an explicit focus, else JEV_COMPACT_GOAL, else the last few user
- * prompts. Every caller derives it here, so a score frozen by one path is found by the other.
+ * The task Jev judges against: JEV_COMPACT_GOAL, else the last few user prompts. Every caller derives
+ * it here from the same branch messages, so a score frozen by one path is found by the other. The
+ * compaction path deliberately does not fold in its custom instructions: judge and planPrune cannot
+ * see them, and a goal only one path knows would freeze scores the other never reuses.
  */
-function inferGoal(messages: any[], override?: string): string {
+function inferGoal(messages: any[]): string {
   const prompts = messages
     .filter((message) => message?.role === "user")
     .map((message) => rawTextOf(message))
     .filter(Boolean)
     .slice(-3);
-  const goal = override?.trim() || process.env.JEV_COMPACT_GOAL?.trim() || prompts.join(" | ") || ONGOING;
+  const goal = process.env.JEV_COMPACT_GOAL?.trim() || prompts.join(" | ") || ONGOING;
   // The goal rides along in every state and fitState never shrinks it, so one pasted file would
   // otherwise blow the state budget on its own.
   return clip(goal, MAX_GOAL_CHARS);
@@ -202,24 +211,37 @@ function evictStale(scores: Record<string, ScoreRecord>): Record<string, ScoreRe
 }
 
 function loadScores(cwd: string): Record<string, ScoreRecord> {
-  // An absent or corrupt cache reads as empty: everything is simply judged again.
+  // An absent or corrupt cache reads as empty: everything is simply judged again. A record that is
+  // not an object with a finite numeric `keep` is dropped here rather than trusted: a hand-edited
+  // string would compare as NaN, fall through every band, and silently drop history.
   const scores = readJsonObject(sidecarPath(cwd)).scores;
-  return isJsonObject(scores) ? (scores as Record<string, ScoreRecord>) : {};
+  if (!isJsonObject(scores)) return {};
+  const clean: Record<string, ScoreRecord> = {};
+  for (const [hash, record] of Object.entries(scores)) {
+    if (!isJsonObject(record)) continue;
+    const { keep, at, goal } = record;
+    if (typeof keep !== "number" || !Number.isFinite(keep)) continue;
+    clean[hash] = { keep, at: typeof at === "string" ? at : "", goal: typeof goal === "string" ? goal : "" };
+  }
+  return clean;
 }
 
-function saveScores(cwd: string, scores: Record<string, ScoreRecord>): void {
+function saveScores(cwd: string, scores: Record<string, ScoreRecord>): boolean {
   try {
     // Evict on write: nothing else bounds the cache, and every reader parses the whole file.
     writeJson(sidecarPath(cwd), { scores: evictStale(scores) });
+    return true;
   } catch {
     // Unwritable cache: judging still works, freezing just does not persist.
+    return false;
   }
 }
 
 /**
  * The state Jev reasons over: the same candidates with shorter text, shrunk through STATE_CAPS until
- * it fits its budget. Past the smallest cap the oldest messages are left out — they are the ones
- * furthest from where the task continues — while the questions still cover every candidate.
+ * it fits its budget. Past the smallest cap the oldest messages are left out, here and from the
+ * questions with them: a question about a message the state does not show has no referent. They stay
+ * unscored, which means kept verbatim — never dropped on the strength of a score nobody gave.
  */
 function fitState(
   candidates: Candidate[],
@@ -281,11 +303,15 @@ export class JevCompactor {
 
   public setEnabled(enabled: boolean): void { this.enabled = enabled; }
 
-  /** Drop the frozen scores and the breaker: the next pass judges everything again. */
-  public reset(cwd: string): void {
-    saveScores(cwd, {});
+  /**
+   * Drop the frozen scores and the breaker: the next pass judges everything again. Reports whether
+   * the cache file was actually written, so a caller never claims a clear that did not happen.
+   */
+  public reset(cwd: string): boolean {
+    const written = saveScores(cwd, {});
     this.failStreak = 0;
     this.breakerUntil = 0;
+    return written;
   }
 
   /** Two consecutive failures pause judging; a successful pass clears the breaker. */
@@ -377,8 +403,9 @@ export class JevCompactor {
 
     const cwd = ctx?.cwd ?? process.cwd();
     // Derive the goal from the whole branch, exactly as judge/planPrune do, so the two paths share
-    // scores instead of invalidating each other.
-    const goal = inferGoal(branchMessagesOf(event?.branchEntries), event.customInstructions);
+    // scores instead of invalidating each other. The custom instructions are deliberately not the
+    // goal: planPrune never sees them, so a score frozen under them would never be found again.
+    const goal = inferGoal(branchMessagesOf(event?.branchEntries));
     try {
       const scores = await this.scoreInto(candidates, goal, cwd, event.signal, c);
 
@@ -405,7 +432,7 @@ export class JevCompactor {
 
       const summary = [
         "Jev compaction summary (tool history retained selectively; user/assistant intent preserved):",
-        event.customInstructions ? `Goal: ${event.customInstructions}` : "",
+        event.customInstructions ? `Instructions: ${event.customInstructions}` : "",
         lines.length ? lines.join("\n") : "No historical messages were judged necessary to retain.",
       ].filter(Boolean).join("\n");
       return { summary, kept, truncated, dropped, considered: candidates.length };

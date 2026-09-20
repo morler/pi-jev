@@ -86,6 +86,8 @@ export default function (pi: ExtensionAPI) {
   let activeRun = false;
   let applied: Map<string, Decision> | null = null;
   let lastJudgeAt = 0;
+  /** The counts of the last summary compaction, for `/jev status`. */
+  let lastCompact: { kept: number; truncated: number; dropped: number } | null = null;
   let pressure: PressureState = "armed";
 
   const pruningOn = (schedule = pruneSchedule()): boolean =>
@@ -96,24 +98,27 @@ export default function (pi: ExtensionAPI) {
 
   const branchMessages = (ctx: any): any[] => branchMessagesOf(ctx?.sessionManager?.getBranch?.() ?? []);
 
-  // Pi's own compaction settings sit behind SettingsManager, reachable only at runtime. Failing to
-  // load them just means no pressure path: the cold and no-cache checkpoints still work.
+  // Pi's own compaction settings sit behind SettingsManager, reachable only at runtime. When they
+  // cannot be read the safe-input ceiling is unknown, and an unknown boundary cancels nothing —
+  // treating it as reserve 0 would widen the ceiling to the whole window and silently cancel Pi's own
+  // threshold compaction. The cold and no-cache checkpoints work regardless.
   let settingsModule: any;
   const loadSettingsModule = async (): Promise<any> => {
     if (settingsModule !== undefined) return settingsModule;
     try {
       const mod: any = await import("@earendil-works/pi-coding-agent");
-      settingsModule = mod?.SettingsManager && mod?.getAgentDir ? mod : null;
+      // Only a successful load is cached: a transient import failure must not poison every later call.
+      if (mod?.SettingsManager && mod?.getAgentDir) settingsModule = mod;
     } catch {
-      settingsModule = null;
+      // Fall through: this call reports unknown, the next one tries again.
     }
-    return settingsModule;
+    return settingsModule ?? null;
   };
 
   /** Where real usage sits against Pi's own safe-input ceiling; overCeiling is null when unknown. */
   const boundary = async (ctx: any): Promise<ContextBoundary> => {
     const mod = await loadSettingsModule();
-    let reserveTokens = 0;
+    let reserveTokens: number | null = null;
     if (mod) {
       try {
         const manager = mod.SettingsManager.create(ctx?.cwd, mod.getAgentDir(), {
@@ -122,9 +127,10 @@ export default function (pi: ExtensionAPI) {
         const settings = manager.getCompactionSettings(
           ctx?.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined
         );
-        reserveTokens = settings?.reserveTokens ?? 0;
+        const reserve = settings?.reserveTokens;
+        if (typeof reserve === "number" && Number.isFinite(reserve)) reserveTokens = Math.max(0, reserve);
       } catch {
-        reserveTokens = 0;
+        reserveTokens = null; // settings unreadable: unknown ceiling, so nothing is cancelled
       }
     }
     let usage: { tokens?: number | null; contextWindow?: number } | undefined;
@@ -133,6 +139,7 @@ export default function (pi: ExtensionAPI) {
     } catch {
       usage = undefined; // unknown usage: the boundary stays unknown, so nothing acts on it
     }
+    if (reserveTokens === null) return { overCeiling: null };
     return realContextBoundary({
       tokens: usage?.tokens,
       contextWindow: usage?.contextWindow ?? ctx?.model?.contextWindow,
@@ -152,13 +159,21 @@ export default function (pi: ExtensionAPI) {
       ].join("\n");
     },
 
+    counts() {
+      return lastCompact
+        ? `Last compaction: ${lastCompact.kept} kept · ${lastCompact.truncated} trunc · ${lastCompact.dropped} drop`
+        : "Last compaction: none this session";
+    },
+
     reset(ctx) {
-      compactor.reset(ctx.cwd);
+      const written = compactor.reset(ctx.cwd);
       applied = null;
       pressure = "armed";
       lastJudgeAt = 0;
       noCacheStreak = 0;
       lastResponseAt = 0;
+      // The caller must not report a clear the cache file never took.
+      return written;
     },
 
     async now(ctx) {
@@ -218,6 +233,7 @@ export default function (pi: ExtensionAPI) {
 
     const result = await compactor.compact(event, ctx);
     if (!result.summary) return;
+    lastCompact = { kept: result.kept, truncated: result.truncated, dropped: result.dropped };
     ctx.ui.setStatus("jev", `jev: compact ${result.kept} kept · ${result.truncated} trunc · ${result.dropped} drop`);
     return {
       compaction: {

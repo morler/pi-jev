@@ -172,9 +172,9 @@ Scores are frozen by content hash in `.pi/pi-jev.compact.json` (gitignored), key
 
 An unparsable value keeps the default. Deleting the score file only forces re-judging.
 
-Two inversions are corrected rather than obeyed: `JEV_COMPACT_DROP` is clamped to `JEV_COMPACT_KEEP` (a drop band above the keep band would be unreachable, silently emptying the truncate band), and `JEV_COMPACT_MAXREQ` is raised above `JEV_COMPACT_MAXSTATE` (a request budget at or below the state budget leaves no room for questions and fans a pass out to one request per message). `/jev compact status` prints the effective bands.
+Two inversions are corrected rather than obeyed: `JEV_COMPACT_KEEP` and `JEV_COMPACT_DROP` are read as an unordered pair, so the higher value is always the keep band and an inverted pair cannot empty the truncate band, and `JEV_COMPACT_MAXREQ` is raised above `JEV_COMPACT_MAXSTATE` (a request budget at or below the state budget leaves no room for questions and fans a pass out to one request per message). A negative `JEV_COMPACT_RECENT` falls back to the default. `/jev compact status` prints the effective bands.
 
-Long histories stay inside those ceilings rather than failing: the state is re-extracted with shorter per-message text until it fits `JEV_COMPACT_MAXSTATE` (past the smallest cap the oldest messages are left out of the state, never out of the decision), and the questions are split across requests so state + questions fits `JEV_COMPACT_MAXREQ`. Every request is bounded by `JEV_COMPACT_TIMEOUT`, and two consecutive failures pause judging for `JEV_COMPACT_BREAKER` — during that pause compaction still runs, keeping every message verbatim because an unscored message is never dropped.
+Long histories stay inside those ceilings rather than failing: the state is re-extracted with shorter per-message text until it fits `JEV_COMPACT_MAXSTATE` (past the smallest cap the oldest messages are left out of the state, and so are not asked about either — an unasked message is kept verbatim), and the questions are split across requests so state + questions fits `JEV_COMPACT_MAXREQ`. Every request is bounded by `JEV_COMPACT_TIMEOUT`, and two consecutive failures pause judging for `JEV_COMPACT_BREAKER` — during that pause compaction still runs, keeping every message verbatim because an unscored message is never dropped.
 
 #### In-place pruning
 
@@ -182,7 +182,7 @@ Compaction only runs when Pi asks for it. The same scores also let Jev shrink th
 
 Judging runs in the background after an agent run settles (`agent_settled`), at most once per `JEV_COMPACT_GAP`, and only writes scores — it never rewrites messages. The `context` hook is the single place messages change, and it refreshes its decisions only at a checkpoint where a full-prefix cache miss is already paid or free:
 
-- **cold** — the provider's prefix cache is stale (`Date.now() - lastResponseAt > JEV_COMPACT_TTL`);
+- **cold** — the provider's prefix cache is stale (`Date.now() - lastResponseAt > JEV_COMPACT_TTL`), or no response has been served yet this session;
 - **no-cache** — the provider never writes cache (`cacheRead` and `cacheWrite` both zero for three turns), so pruning is always free;
 - **pressure** — usage is past Pi's own safe-input ceiling (`contextWindow - reserveTokens`, read from Pi's compaction settings), so the next request misses the cache anyway. One pass per armed episode (ARMED → AWAITING_VALIDATION → ARMED or EXHAUSTED), validated by the next real post-turn usage: a pass that did not bring usage back inside is not repeated, and Pi's compaction takes over.
 
@@ -196,7 +196,7 @@ Auto-model uses task signals, attached images, and context size to choose the be
 
 ## Commands
 
-- `/jev status` — Shows Jev configuration (and where the API key came from), auto-mode state, session request count, total tokens, and available tool counts.
+- `/jev status` — Shows Jev configuration (and where the API key came from), auto-mode state, session request count, total tokens, available tool counts, and the kept/truncated/dropped counts of the last compaction.
 - `/jev help` — Lists available subcommands.
 - `/jev skills [query]` — Discover and rank matching skills in the workspace using Jev.
 - `/jev test [prompt]` — With no prompt, runs the fixed connectivity smoke test. With a prompt, the active model designs the Jev questions for that prompt and Jev evaluates them. Also accepts `/jev eval` and `/jev evaluate`.

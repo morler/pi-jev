@@ -26,7 +26,10 @@ const PRUNE_UNAVAILABLE = "Jev in-place pruning is not available in this session
 /** The pruning path, exposed to `/jev compact status|reset|now` and the `jev_compact_now` tool. */
 export interface PruneControl {
   status(): string;
-  reset(ctx: PruneContext): void;
+  /** One line for `/jev status`: the counts of the last summary compaction. */
+  counts(): string;
+  /** Reports whether the score cache was actually cleared; false means the file was unwritable. */
+  reset(ctx: PruneContext): boolean;
   now(ctx: PruneContext): Promise<string>;
 }
 
@@ -84,6 +87,7 @@ export function registerJevCommands(
             `• Auto mode: ${auto.enabled ? "on" : "off"}${auto.enabled && !origin ? " (inactive: Jev unconfigured)" : ""}\n` +
             `• Auto-model: ${modelMode.enabled ? "on" : "off"}\n` +
             `• Jev compaction: ${compactMode.enabled ? "on" : "off"}\n` +
+            (prune ? `• ${prune.counts()}\n` : "") +
             `• Agent orchestration: ${agentMode.enabled ? "on" : "off"}\n` +
             `• Saved config: ${configPath()}\n` +
             (overrides.length ? `• Env override (wins over saved): ${overrides.join(", ")}\n` : "") +
@@ -221,9 +225,14 @@ export function registerJevCommands(
             ctx.ui.notify(PRUNE_UNAVAILABLE, "warning");
             return;
           }
-          prune.reset(ctx);
-          ctx.ui.notify("Jev compaction: frozen scores, applied decisions, breaker, and pressure state cleared.", "info");
-          return;
+      const written = prune.reset(ctx);
+      ctx.ui.notify(
+        written
+          ? "Jev compaction: frozen scores, applied decisions, breaker, and pressure state cleared."
+          : "Jev compaction: state cleared for this session, but the score cache file could not be written.",
+        written ? "info" : "warning"
+      );
+      return;
         }
 
         if (arg === "now") {

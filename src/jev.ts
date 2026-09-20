@@ -35,24 +35,18 @@ export function noulProbability(rawAnswer: unknown): number | null {
 export class JevClient {
   /** Platform this client talks to, fixed for the process lifetime. */
   public readonly platform: JevPlatform = resolvePlatform();
-  private apiKey: string | null = null;
   public stats: JevSessionStats = {
     requestsCount: 0,
     totalTokens: 0,
   };
 
   public isConfigured(): boolean {
-    return Boolean(resolveCredential(this.platform) || this.apiKey);
+    return Boolean(resolveCredential(this.platform));
   }
 
   /** Human-readable description of where the API key came from, or null when unconfigured. */
   public getKeyOrigin(): string | null {
-    if (this.apiKey) return "set in-session";
     return resolveCredential(this.platform)?.origin ?? null;
-  }
-
-  public setApiKey(key: string): void {
-    this.apiKey = key;
   }
 
   public async evaluate(
@@ -60,8 +54,7 @@ export class JevClient {
     signal?: AbortSignal
   ): Promise<JevEvaluationResponse> {
     const startTime = Date.now();
-    // An in-session key set via setApiKey() overrides the environment and secret file.
-    const apiKey = this.apiKey ?? resolveCredential(this.platform)?.key;
+    const apiKey = resolveCredential(this.platform)?.key;
     if (!apiKey) {
       throw new Error(
         `Missing Jev API key for the ${this.platform} platform. ${credentialHint(this.platform)}.`
