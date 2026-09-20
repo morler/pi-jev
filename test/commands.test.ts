@@ -6,8 +6,9 @@ import type { ToolRouter } from "../src/router.js";
 import type { SkillRouter } from "../src/skills.js";
 import type { AutoJev } from "../src/auto.js";
 
-function harness(designed: unknown, answers: Record<string, any> = {}) {
+function harness(designed: unknown, answers: Record<string, any> = {}, prune?: any) {
   let handler: ((args: string, ctx: any) => Promise<void>) | undefined;
+  const saved: Array<{ key: string; value: boolean }> = [];
   let activeTools = ["read"];
   const allTools = [
     { name: "read" },
@@ -51,7 +52,14 @@ function harness(designed: unknown, answers: Record<string, any> = {}) {
     jevClient,
     {} as ToolRouter,
     {} as SkillRouter,
-    auto as unknown as AutoJev
+    auto as unknown as AutoJev,
+    undefined,
+    undefined,
+    undefined,
+    (key: string, value: boolean) => {
+      saved.push({ key, value });
+    },
+    prune
   );
 
   const notify = (message: string, level?: string) => {
@@ -60,6 +68,7 @@ function harness(designed: unknown, answers: Record<string, any> = {}) {
   const calls: Array<{ message: string; level?: string }> = [];
 
   const ctx: any = {
+    cwd: "/tmp/pi-jev-project",
     ui: { notify },
     model: { provider: "openai", id: "gpt-x" },
     modelRegistry: {
@@ -76,6 +85,7 @@ function harness(designed: unknown, answers: Record<string, any> = {}) {
     calls,
     active: () => [...activeTools],
     auto,
+    saved,
   };
 }
 
@@ -178,17 +188,97 @@ test("/jev status reports config origin and excludes own tools from the routable
   assert.match(status, /Configured: Yes \(from ~\/\.pi\/agent\/secrets\/typesafe_api_key\)/);
   // active: read. bash is routable; the three jev tools are ours and must not count.
   assert.match(status, /Active tools: 1 \/ Available: 5 \(1 routable\)/);
+  assert.match(status, /Saved config: .*pi-jev\.json/);
 });
 
 test("/jev enable and /jev disable only touch this extension's tools", async () => {
   const { run, calls, active } = harness({});
 
   await run("enable");
-  assert.deepEqual(active().sort(), ["jev_evaluate", "jev_find_skill", "jev_find_tools", "read"]);
-  assert.match(calls.at(-1)!.message, /Jev tools \(jev_find_tools, jev_find_skill, jev_evaluate\) enabled/);
+  assert.deepEqual(active().sort(), ["jev_compact_now", "jev_evaluate", "jev_find_skill", "jev_find_tools", "read"]);
+  assert.match(calls.at(-1)!.message, /Jev tools \(jev_find_tools, jev_find_skill, jev_evaluate, jev_compact_now\) enabled/);
 
   await run("disable");
   assert.deepEqual(active(), ["read"]);
+});
+
+test("/jev compact status|reset|now drive the pruning controls", async () => {
+  const seen: string[] = [];
+  const prune = {
+    status: () => "pruning on · pressure armed",
+    reset: (ctx: any) => seen.push(`reset ${ctx.cwd}`),
+    now: async (ctx: any) => {
+      seen.push(`now ${ctx.cwd}`);
+      return "2 dropped · 40 chars saved";
+    },
+  };
+  const { run, calls } = harness(undefined, {}, prune);
+
+  await run("compact status");
+  assert.equal(calls.at(-1)!.message, "pruning on · pressure armed");
+
+  await run("compact reset");
+  assert.deepEqual(seen, ["reset /tmp/pi-jev-project"]);
+  assert.match(calls.at(-1)!.message, /frozen scores, applied decisions, breaker, and pressure state cleared/);
+
+  await run("compact now");
+  assert.deepEqual(seen, ["reset /tmp/pi-jev-project", "now /tmp/pi-jev-project"]);
+  assert.equal(calls.at(-1)!.message, "2 dropped · 40 chars saved");
+});
+
+test("/jev compact status|reset|now admit when pruning is unavailable", async () => {
+  const { run, calls } = harness(undefined, {});
+
+  await run("compact status");
+  assert.match(calls.at(-1)!.message, /not available in this session/);
+
+  await run("compact reset");
+  assert.equal(calls.at(-1)!.level, "warning", "a reset that did nothing must not report success");
+
+  await run("compact now");
+  assert.equal(calls.at(-1)!.level, "warning");
+});
+
+test("/jev toggles are saved globally, keyed per switch", async () => {
+  const { run, calls, saved, auto } = harness({});
+
+  await run("auto on");
+  assert.deepEqual(saved, [{ key: "auto", value: true }]);
+  assert.match(calls.at(-1)!.message, /Saved to the global config/);
+
+  saved.length = 0;
+  await run("auto off");
+  assert.deepEqual(saved, [{ key: "auto", value: false }]);
+  assert.equal(auto.enabled, false);
+
+  saved.length = 0;
+  await run("compact on");
+  assert.deepEqual(saved, [{ key: "compact", value: true }]);
+
+  saved.length = 0;
+  await run("auto-model on");
+  assert.deepEqual(saved, [{ key: "autoModel", value: true }]);
+
+  saved.length = 0;
+  await run("auto-agents on");
+  assert.deepEqual(saved, [{ key: "agents", value: true }]);
+});
+
+test("a saved toggle says when an env var still overrides it", async () => {
+  const { run, calls, saved } = harness({});
+
+  process.env.PI_JEV_AUTO = "1";
+  await run("auto off");
+  assert.deepEqual(saved, [{ key: "auto", value: false }]);
+  assert.match(calls.at(-1)!.message, /Saved, but \$PI_JEV_AUTO is set and overrides it/);
+
+  // An env var that agrees with the toggle shadows nothing, so no warning.
+  calls.length = 0;
+  await run("auto on");
+  assert.match(calls.at(-1)!.message, /Saved to the global config/);
+  assert.doesNotMatch(calls.at(-1)!.message, /overrides it/);
+
+  delete process.env.PI_JEV_AUTO;
 });
 
 test("/jev help lists usage at info level instead of warning", async () => {

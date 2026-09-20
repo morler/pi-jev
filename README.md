@@ -73,7 +73,7 @@ pi --jev-auto            # per-run CLI flag
 export PI_JEV_AUTO=1     # persistent via environment
 ```
 
-Toggle at runtime with `/jev auto on` or `/jev auto off` (no argument flips it). Automatic mode:
+Toggle at runtime with `/jev auto on` or `/jev auto off` (no argument flips it); the same works for `/jev auto-model`, `/jev compact`, and `/jev auto-agents`. Every toggle is saved to `~/.pi/agent/pi-jev.json` (`PI_CODING_AGENT_DIR` is honored), so the next Pi session starts the way you left it. Precedence is CLI flag > `PI_JEV_*` env var > saved file; `/jev status` prints the config path and any env var shadowing it. Automatic mode:
 
 - activates inactive tools whose usefulness probability clears `JEV_THRESHOLD` (0.65);
 - injects matching skill recommendations into the turn;
@@ -151,7 +151,42 @@ Execution is asynchronous; completion is reported back into the session. Automat
 
 ### Jev Compaction
 
-`/jev compact on` enables Jev-guided compaction. Tool-history entries are evaluated for retention; important paths, errors, constraints, and results stay in the custom summary. User and assistant intent is not rewritten. The feature preserves Pi's `firstKeptEntryId` boundary and falls back to Pi's built-in summary when Jev is unconfigured, fails, or returns unusable data. It does not silently truncate context.
+`/jev compact on` enables Jev-guided compaction. Every message Pi is about to discard (`preparation.messagesToSummarize`) is scored by Jev, and the score picks one of three bands: **keep** (its text in the custom summary, with a marker when it was longer than the per-message cap), **truncate** (head plus a re-run marker naming how much was dropped), or **drop** (absent from the summary). Nothing is shortened silently. User prose is intent and is never dropped. The feature preserves Pi's `firstKeptEntryId` boundary and falls back to Pi's built-in summary when Jev is unconfigured, fails, or returns unusable data. It does not silently truncate context.
+
+Scores are frozen by content hash in `.pi/pi-jev.compact.json` (gitignored), so an unchanged message is never judged twice and a re-compaction costs nothing. Tune the bands with environment variables:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `JEV_COMPACT_KEEP` | `0.55` | score at or above this keeps the message verbatim |
+| `JEV_COMPACT_DROP` | `0.25` | score at or above this truncates to the head; below it the message is dropped |
+| `JEV_COMPACT_HEAD` | `300` | characters of a truncated message to keep |
+| `JEV_COMPACT_MAXSTATE` | `25000` | estimated-token ceiling for the state Jev reasons over |
+| `JEV_COMPACT_MAXREQ` | `30000` | per-request ceiling (state + questions); questions are batched to fit |
+| `JEV_COMPACT_TIMEOUT` | `20000` | per-request timeout in ms |
+| `JEV_COMPACT_BREAKER` | `120000` | pause after two consecutive failures, in ms |
+| `JEV_COMPACT_RECENT` | `6` | newest messages pruning never touches |
+| `JEV_COMPACT_TTL` | `300000` | prefix-cache TTL in ms: how long a pruned prompt stays frozen |
+| `JEV_COMPACT_GAP` | `30000` | minimum interval between background judging passes, in ms |
+| `JEV_COMPACT_PRUNE` | on | set to `0` to keep compaction but disable in-place pruning |
+| `JEV_COMPACT_GOAL` | last 3 user prompts | fixed task description sent to Jev |
+
+An unparsable value keeps the default. Deleting the score file only forces re-judging.
+
+Long histories stay inside those ceilings rather than failing: the state is re-extracted with shorter per-message text until it fits `JEV_COMPACT_MAXSTATE` (past the smallest cap the oldest messages are left out of the state, never out of the decision), and the questions are split across requests so state + questions fits `JEV_COMPACT_MAXREQ`. Every request is bounded by `JEV_COMPACT_TIMEOUT`, and two consecutive failures pause judging for `JEV_COMPACT_BREAKER` — during that pause compaction still runs, keeping every message verbatim because an unscored message is never dropped.
+
+#### In-place pruning
+
+Compaction only runs when Pi asks for it. The same scores also let Jev shrink the live prompt before that point, so the context lasts longer instead of being summarised earlier. Tool calls and their results are paired (`toolCallId`), because pi-ai requires a call and its result to travel together: a **drop** removes both, a **truncate** shortens the result to its head plus a re-run marker, and everything else is untouched.
+
+Judging runs in the background after an agent run settles (`agent_settled`), at most once per `JEV_COMPACT_GAP`, and only writes scores — it never rewrites messages. The `context` hook is the single place messages change, and it refreshes its decisions only at a checkpoint where a full-prefix cache miss is already paid or free:
+
+- **cold** — the provider's prefix cache is stale (`Date.now() - lastResponseAt > JEV_COMPACT_TTL`);
+- **no-cache** — the provider never writes cache (`cacheRead` and `cacheWrite` both zero for three turns), so pruning is always free;
+- **pressure** — usage is past Pi's own safe-input ceiling (`contextWindow - reserveTokens`, read from Pi's compaction settings), so the next request misses the cache anyway. One pass per armed episode (ARMED → AWAITING_VALIDATION → ARMED or EXHAUSTED), validated by the next real post-turn usage: a pass that did not bring usage back inside is not repeated, and Pi's compaction takes over.
+
+Between checkpoints the same decisions are re-applied, so the prompt prefix stays byte-stable. While an agent run is live, **drop** is held back as **truncate** — the call stays as a breadcrumb — and promotes at the next checkpoint after the run settles. The first message and the newest `JEV_COMPACT_RECENT` messages are never touched, and an unscored call is never dropped.
+
+Because pruning keeps usage under Pi's ceiling, Pi's own **threshold** compaction is cancelled while it can be — that is Pi's early reaction to pressure, and pruning covers it. Manual `/compact` and overflow recovery always pass through to the summary path, and an unknown boundary always lets Pi compact.
 
 ### Automatic Model Mode
 
@@ -168,12 +203,18 @@ Auto-model uses task signals, attached images, and context size to choose the be
 - `/jev auto [on|off]` — Turns automatic per-prompt tool/skill routing on or off (no argument flips it).
 - `/jev auto-model [on|off]` — Turns automatic model selection on or off (no argument flips it).
 - `/jev compact [on|off]` — Turns Jev-guided compaction on or off. Run `/compact` after enabling.
+- `/jev compact status` — Shows in-place pruning state: pressure episode, agent-run flag, no-cache streak, pending changes, and the cache/judge timings.
+- `/jev compact reset` — Clears the frozen scores, the applied decisions, the breaker, and the pressure state.
+- `/jev compact now` — Scores the history and applies the pruning decisions immediately, accepting one prompt-cache miss.
 - `/jev agents <task>` — Dispatches the task to `pi-subagents`, which selects and coordinates available agents.
 - `/jev auto-agents [on|off]` — Enables automatic orchestration for complex architecture, refactoring, security, repository-wide, and migration prompts.
 
 ## Tools Provided
 
-### 1. `jev_find_tools`
+### 1. `jev_compact_now`
+Same as `/jev compact now`: score the history with Jev and apply the pruning decisions now, accepting one prompt-cache miss. Takes no parameters.
+
+### 2. `jev_find_tools`
 Used by the model to find capabilities that aren't currently loaded into the prompt prefix.
 
 ```json
@@ -182,7 +223,7 @@ Used by the model to find capabilities that aren't currently loaded into the pro
 }
 ```
 
-### 2. `jev_find_skill`
+### 3. `jev_find_skill`
 Used by the agent to find relevant specialized workflows and instructions for complex tasks.
 
 ```json
@@ -191,7 +232,7 @@ Used by the agent to find relevant specialized workflows and instructions for co
 }
 ```
 
-### 3. `jev_evaluate`
+### 4. `jev_evaluate`
 Used for structured decisions, classifications, triage, and scoring.
 
 ```json

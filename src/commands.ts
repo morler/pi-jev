@@ -11,6 +11,21 @@ import type { JevEvaluationRequest } from "./types.js";
 import { JEV_TOOL_NAMES, isJevTool } from "./types.js";
 import { JEV_THRESHOLD } from "./skills.js";
 import { credentialHint } from "./platform.js";
+import { SWITCHES, configPath, envOverrides, envShadowed, type JevConfigKey } from "./config.js";
+
+/** What the in-place pruning controls need from a command or tool context. */
+export interface PruneContext {
+  cwd: string;
+  sessionManager: any;
+  signal?: AbortSignal;
+}
+
+/** The pruning path, exposed to `/jev compact status|reset|now` and the `jev_compact_now` tool. */
+export interface PruneControl {
+  status(): string;
+  reset(ctx: PruneContext): void;
+  now(ctx: PruneContext): Promise<string>;
+}
 
 export function registerJevCommands(
   pi: ExtensionAPI,
@@ -20,11 +35,24 @@ export function registerJevCommands(
   auto: AutoJev,
   autoModel?: AutoModelRouter,
   compactor?: JevCompactor,
-  agents?: AgentOrchestrator
+  agents?: AgentOrchestrator,
+  persistSwitch?: (key: JevConfigKey, value: boolean) => void,
+  prune?: PruneControl
 ): void {
   const agentMode = agents ?? { enabled: false, setEnabled: () => {}, dispatch: async () => ({ accepted: false, error: "disabled" }) };
   const compactMode = compactor ?? { enabled: false, setEnabled: () => {} };
   const modelMode = autoModel ?? { enabled: false, setEnabled: () => {} };
+
+  /** Persists a toggle and returns the note to append to the notice. */
+  const saveNotice = (key: JevConfigKey, value: boolean): string => {
+    if (!persistSwitch) return "";
+    persistSwitch(key, value);
+    // An env var that disagrees with what we just saved wins on the next start: say so now.
+    return envShadowed(key, value)
+      ? ` Saved, but $${SWITCHES[key]} is set and overrides it.`
+      : " Saved to the global config.";
+  };
+
   pi.registerCommand("jev", {
     description: "Manage TypeSafe Jev integration (status, enable, disable, auto, test, skills)",
     handler: async (args: string, ctx: ExtensionCommandContext) => {
@@ -32,7 +60,7 @@ export function registerJevCommands(
       const sub = (tokens[0] ?? "").toLowerCase();
       const rest = tokens.slice(1).join(" ");
       const usage =
-        "Available options: /jev status, /jev skills [query], /jev test [prompt], /jev enable, /jev disable, /jev auto [on|off], /jev auto-model [on|off], /jev compact [on|off], /jev auto-agents [on|off], /jev agents [task]";
+        "Available options: /jev status, /jev skills [query], /jev test [prompt], /jev enable, /jev disable, /jev auto [on|off], /jev auto-model [on|off], /jev compact [on|off|status|reset|now], /jev auto-agents [on|off], /jev agents [task]";
 
       if (sub === "status" || sub === "") {
         const origin = jevClient.getKeyOrigin();
@@ -53,6 +81,8 @@ export function registerJevCommands(
             `• Auto-model: ${modelMode.enabled ? "on" : "off"}\n` +
             `• Jev compaction: ${compactMode.enabled ? "on" : "off"}\n` +
             `• Agent orchestration: ${agentMode.enabled ? "on" : "off"}\n` +
+            `• Saved config: ${configPath()}\n` +
+            (envOverrides().length ? `• Env override (wins over saved): ${envOverrides().join(", ")}\n` : "") +
             `• Active tools: ${activeTools.length} / Available: ${allTools.length} (${routable} routable)\n` +
             (jevClient.stats.lastError ? `• Last error: ${jevClient.stats.lastError}` : ""),
           "info"
@@ -176,13 +206,39 @@ export function registerJevCommands(
 
       if (sub === "compact") {
         const arg = rest.toLowerCase();
+
+        if (arg === "status") {
+          ctx.ui.notify(prune?.status() ?? "Jev in-place pruning is not available in this session.", "info");
+          return;
+        }
+
+        if (arg === "reset") {
+          if (!prune) {
+            ctx.ui.notify("Jev in-place pruning is not available in this session.", "warning");
+            return;
+          }
+          prune.reset(ctx);
+          ctx.ui.notify("Jev compaction: frozen scores, applied decisions, breaker, and pressure state cleared.", "info");
+          return;
+        }
+
+        if (arg === "now") {
+          if (!prune) {
+            ctx.ui.notify("Jev in-place pruning is not available in this session.", "warning");
+            return;
+          }
+          ctx.ui.notify("Scoring history with Jev and applying the decisions...", "info");
+          ctx.ui.notify(await prune.now(ctx), "info");
+          return;
+        }
+
         if (arg !== "" && arg !== "on" && arg !== "off") {
           ctx.ui.notify(`Unknown /jev compact argument "${rest}". ${usage}`, "warning");
           return;
         }
         const enabled = arg === "on" ? true : arg === "off" ? false : !compactMode.enabled;
         compactMode.setEnabled(enabled);
-        ctx.ui.notify(`Jev compaction ${enabled ? "enabled" : "disabled"}. Use /compact to run it.`, "info");
+        ctx.ui.notify(`Jev compaction ${enabled ? "enabled" : "disabled"}.${saveNotice("compact", enabled)} Use /compact to run it.`, "info");
         return;
       }
 
@@ -194,7 +250,7 @@ export function registerJevCommands(
         }
         const enabled = arg === "on" ? true : arg === "off" ? false : !agentMode.enabled;
         agentMode.setEnabled(enabled);
-        ctx.ui.notify(`Automatic agent orchestration ${enabled ? "enabled" : "disabled"}.`, "info");
+        ctx.ui.notify(`Automatic agent orchestration ${enabled ? "enabled" : "disabled"}.${saveNotice("agents", enabled)}`, "info");
         return;
       }
 
@@ -206,7 +262,7 @@ export function registerJevCommands(
         }
         const enabled = arg === "on" ? true : arg === "off" ? false : !modelMode.enabled;
         modelMode.setEnabled(enabled);
-        ctx.ui.notify(`Jev auto-model mode ${enabled ? "enabled" : "disabled"}.`, "info");
+        ctx.ui.notify(`Jev auto-model mode ${enabled ? "enabled" : "disabled"}.${saveNotice("autoModel", enabled)}`, "info");
         return;
       }
 
@@ -219,9 +275,9 @@ export function registerJevCommands(
         const enabled = arg === "on" ? true : arg === "off" ? false : !auto.enabled;
         auto.setEnabled(enabled);
         ctx.ui.notify(
-          enabled
+          (enabled
             ? "Jev auto mode enabled: each prompt routes tools and suggests skills. Costs one Jev request per prompt."
-            : "Jev auto mode disabled.",
+            : "Jev auto mode disabled.") + saveNotice("auto", enabled),
           "info"
         );
         return;

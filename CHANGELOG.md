@@ -8,9 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Pressure checkpoint for in-place pruning: real usage is compared against Pi's own safe-input ceiling (its compaction `reserveTokens`), and one pass per armed episode (ARMED → AWAITING_VALIDATION → ARMED/EXHAUSTED) refreshes the decision set when the next request would miss the cache anyway. A pass that does not bring usage back inside is not repeated. Pi's **threshold** compaction is now cancelled while pruning can cover it; manual and overflow compactions always pass through.
+- `/jev compact status|reset|now` and the `jev_compact_now` tool expose the pruning path: state, a full reset of scores/decisions/breaker/pressure, and a manual pass that accepts one cache miss. `now` reports the decisions it queued (the rewrite itself lands on the next request).
+- Jev-guided in-place pruning: the same frozen scores now shrink the live prompt from the `context` hook, pairing each tool call with its result so a drop removes both. Judging runs in the background on `agent_settled` and only writes scores; the decision set refreshes only at a checkpoint where a prefix-cache miss is already paid (cold cache, `JEV_COMPACT_TTL`) or free (a provider that writes no cache), and stays byte-stable in between. While an agent run is live, drops are held back as truncates. The first message and the newest `JEV_COMPACT_RECENT` messages are never touched, and `JEV_COMPACT_PRUNE=0` disables pruning while keeping compaction.
+- Jev compaction stays inside a request budget: the state is re-extracted with shorter per-message text until it fits `JEV_COMPACT_MAXSTATE`, the questions are batched so state + questions fits `JEV_COMPACT_MAXREQ`, each request is bounded by `JEV_COMPACT_TIMEOUT`, and two consecutive failures pause judging for `JEV_COMPACT_BREAKER`. An unscored message is kept verbatim, so a failed or skipped judging pass can never drop history.
+- Jev compaction now scores every message Pi is about to discard (`preparation.messagesToSummarize` plus any split-turn prefix) instead of the oldest 24 branch entries, and splits the score into three bands: keep verbatim, truncate to a head with a re-run marker, or drop from the summary. Bands are tunable via `JEV_COMPACT_KEEP`, `JEV_COMPACT_DROP`, and `JEV_COMPACT_HEAD`.
+- Compaction scores are frozen by content hash in `.pi/pi-jev.compact.json`, so an unchanged message is never judged twice and re-compacting a stable history costs no Jev requests.
 - Jev API platform selection via `JEV_PLATFORM`: `typesafe` (default), `openrouter`, `cloudflare`, and `vercel`. Tools, skills, gate CLI, typed agent, auto mode, and compaction all follow the selected platform.
 - Per-platform credential resolution from environment variables or Pi secret files (`openrouter_api_key`, `cloudflare_api_token`, `ai_gateway_api_key`), plus `JEV_MODEL` as a model override for any platform.
 - `/jev status` reports the active platform, and error messages name the missing credential for it.
+- `/jev status` and the compaction status line report kept, truncated, and dropped counts.
+- Global switch persistence: `/jev auto|auto-model|compact|auto-agents [on|off]` writes `~/.pi/agent/pi-jev.json` (`PI_CODING_AGENT_DIR` honored), so automatic mode, auto-model, Jev compaction, and agent orchestration start the next Pi session the way you left them. Precedence is CLI flag > `PI_JEV_*` env var > saved file. `/jev status` names the path plus any shadowing env var, and a toggle that an env var would override says so instead of claiming a clean save.
+
+### Fixed
+- A question is now keyed to the message it asks about: state entries carry the hash each question is keyed by, so Jev can answer against a specific message. Messages the state had to omit (a history too large even at the smallest text cap) are no longer asked about, since such a question has no referent.
+- A malformed Jev answer (`null`, `""`, `[]`, `false`) is no longer coerced to a finite `0` and frozen as a score of zero, which the drop band would then have acted on. The root cause was `JevAnswerResult.value` falling back to `0` for reporting, so compaction now reads the provider's own answer through `noulProbability`; only a number, or a non-empty numeric string, is accepted, and anything else stays uncached with the message kept.
+- Scores are frozen against a message's FULL text, so an edit past the per-message cap is judged again instead of reusing a stale score.
+- The keep band marks a message it had to clip, and the truncate band's "N chars omitted" now counts the real omission rather than the distance from the per-message cap. Nothing is shortened silently.
+- Pi's threshold compaction is never cancelled on an unknown boundary, not even mid pressure episode.
+- `/jev compact reset` no longer reports success when no pruning control is available.
 
 ### Changed
 - `/jev status` reports the real credential origin (`$TYPESAFE_API_KEY` or the secret file) instead of always reporting "set in-session".

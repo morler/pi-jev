@@ -14,6 +14,24 @@ import type {
   JevSessionStats,
 } from "./types.js";
 
+/**
+ * The noul probability the provider actually gave, or null when it gave none.
+ *
+ * `JevAnswerResult.value` falls back to 0 so reporting code always has a number, which makes "no
+ * answer" indistinguishable from "answered zero". Anything that has to tell them apart reads through
+ * here instead — compaction does, because a low score drops history.
+ */
+export function noulProbability(rawAnswer: unknown): number | null {
+  const raw = rawAnswer as any;
+  const value = raw?.noul ?? raw?.probability ?? raw?.value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
 export class JevClient {
   /** Platform this client talks to, fixed for the process lifetime. */
   public readonly platform: JevPlatform = resolvePlatform();
