@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { JevClient } from "./jev.js";
 import type { QuestionConfig, JevEvaluationResponse } from "./types.js";
+import { credentialHint } from "./platform.js";
 
 const RPC_REQUEST = "subagents:rpc:v1:request";
 const RPC_REPLY = "subagents:rpc:v1:reply:";
@@ -18,7 +19,7 @@ export interface JevAgentTaskParams {
 export interface JevAgentResult {
   success: boolean;
   model: string;
-  answers: Record<string, any>;
+  answers: Record<string, unknown>;
   primaryValue?: any;
   elapsedMs: number;
   usage?: any;
@@ -31,7 +32,9 @@ export async function executeJevAgentTask(
   signal?: AbortSignal
 ): Promise<JevAgentResult> {
   if (!client.isConfigured()) {
-    throw new Error("TypeSafe Jev API key unconfigured. Set TYPESAFE_API_KEY.");
+    throw new Error(
+      `Jev API key unconfigured for the ${client.platform} platform. ${credentialHint(client.platform)}.`
+    );
   }
 
   let questions: Record<string, QuestionConfig> = {};

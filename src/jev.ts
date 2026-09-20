@@ -1,83 +1,40 @@
-import { TypeSafeClient, choice, noul, score } from "@typesafe-ai/sdk";
-import * as fs from "node:fs";
-import * as path from "node:path";
-import * as os from "node:os";
+import { choice, noul, score } from "@typesafe-ai/sdk";
+import {
+  callJev,
+  credentialHint,
+  resolveCredential,
+  resolveModel,
+  resolvePlatform,
+  type JevPlatform,
+} from "./platform.js";
 import type {
   JevEvaluationRequest,
   JevEvaluationResponse,
   JevAnswerResult,
   JevSessionStats,
-  QuestionConfig,
 } from "./types.js";
 
-export type ApiKeySource = "env" | "file";
-
-/** Resolve the API key together with where it came from, for status reporting. */
-export function resolveApiKeySource(): { key: string; source: ApiKeySource; origin: string } | null {
-  const envKey = process.env.TYPESAFE_API_KEY?.trim();
-  if (envKey) return { key: envKey, source: "env", origin: "$TYPESAFE_API_KEY" };
-
-  const defaultSecretPath = path.join(
-    os.homedir(),
-    ".pi",
-    "agent",
-    "secrets",
-    "typesafe_api_key"
-  );
-  if (fs.existsSync(defaultSecretPath)) {
-    try {
-      const content = fs.readFileSync(defaultSecretPath, "utf8").trim();
-      if (content) {
-        return { key: content, source: "file", origin: "~/.pi/agent/secrets/typesafe_api_key" };
-      }
-    } catch {
-      // Ignore read errors
-    }
-  }
-
-  return null;
-}
-
-function resolveApiKey(): string | null {
-  return resolveApiKeySource()?.key ?? null;
-}
-
 export class JevClient {
-  private client: TypeSafeClient | null = null;
+  /** Platform this client talks to, fixed for the process lifetime. */
+  public readonly platform: JevPlatform = resolvePlatform();
   private apiKey: string | null = null;
   public stats: JevSessionStats = {
     requestsCount: 0,
     totalTokens: 0,
   };
 
-  constructor() {
-    this.apiKey = resolveApiKey();
-  }
-
   public isConfigured(): boolean {
-    return Boolean(resolveApiKeySource() || this.apiKey);
+    return Boolean(resolveCredential(this.platform) || this.apiKey);
   }
 
   /** Human-readable description of where the API key came from, or null when unconfigured. */
   public getKeyOrigin(): string | null {
     if (this.apiKey) return "set in-session";
-    return resolveApiKeySource()?.origin ?? null;
+    return resolveCredential(this.platform)?.origin ?? null;
   }
 
   public setApiKey(key: string): void {
     this.apiKey = key;
-    this.client = null;
-  }
-
-  private getClient(): TypeSafeClient {
-    const key = resolveApiKey() || this.apiKey;
-    if (!key) {
-      throw new Error("Missing TYPESAFE_API_KEY. Set it in environment or ~/.pi/agent/secrets/typesafe_api_key.");
-    }
-    if (!this.client) {
-      this.client = new TypeSafeClient({ apiKey: key });
-    }
-    return this.client;
   }
 
   public async evaluate(
@@ -85,28 +42,31 @@ export class JevClient {
     signal?: AbortSignal
   ): Promise<JevEvaluationResponse> {
     const startTime = Date.now();
-    const client = this.getClient();
+    // An in-session key set via setApiKey() overrides the environment and secret file.
+    const apiKey = this.apiKey ?? resolveCredential(this.platform)?.key;
+    if (!apiKey) {
+      throw new Error(
+        `Missing Jev API key for the ${this.platform} platform. ${credentialHint(this.platform)}.`
+      );
+    }
 
-    const formattedQuestions: Record<string, any> = {};
+    const questions: Record<string, unknown> = {};
     for (const [id, q] of Object.entries(request.questions)) {
       if (q.type === "choice") {
-        formattedQuestions[id] = choice(q.instructions, q.criteria);
+        questions[id] = choice(q.instructions, q.criteria);
       } else if (q.type === "noul") {
-        formattedQuestions[id] = noul(q.instructions);
+        questions[id] = noul(q.instructions);
       } else if (q.type === "score") {
-        formattedQuestions[id] = score(q.instructions, q.criteria as any);
+        questions[id] = score(q.instructions, q.criteria as any);
       }
     }
 
-    const statePayload: any =
+    const state: unknown =
       typeof request.state === "string" ? { text: request.state } : request.state;
+    const model = resolveModel(this.platform, request.model);
 
     try {
-      const response: any = await client.systemOne({
-        state: statePayload,
-        questions: formattedQuestions,
-        model: request.model,
-      }, { signal });
+      const response = await callJev(this.platform, apiKey, { state, questions, model, signal });
 
       const elapsedMs = Date.now() - startTime;
       this.stats.requestsCount += 1;
@@ -115,32 +75,33 @@ export class JevClient {
       this.stats.lastElapsedMs = elapsedMs;
 
       const answers: Record<string, JevAnswerResult> = {};
-      for (const [id, rawAns] of Object.entries(response.answers || {})) {
+      for (const [id, rawAns] of Object.entries(response.answers)) {
         const qConfig = request.questions[id];
         if (!qConfig) continue;
 
+        const raw = rawAns as any;
+        // The Vercel AI Gateway answers with gateway types and reports confidence out of band.
+        const confidence = raw?.confidence ?? response.confidence?.[id];
+
         if (qConfig.type === "choice") {
-          const c = (rawAns as any).choice ?? (rawAns as any).value;
           answers[id] = {
             type: "choice",
-            value: c,
-            confidence: (rawAns as any).confidence,
-            distribution: (rawAns as any).distribution,
+            value: raw?.choice ?? raw?.value,
+            confidence,
+            distribution: raw?.distribution ?? raw?.probabilities,
             raw: rawAns,
           };
         } else if (qConfig.type === "noul") {
-          const prob = (rawAns as any).noul ?? (rawAns as any).probability ?? (rawAns as any).value ?? 0;
           answers[id] = {
             type: "noul",
-            value: prob,
+            value: raw?.noul ?? raw?.probability ?? raw?.value ?? 0,
             raw: rawAns,
           };
         } else if (qConfig.type === "score") {
-          const s = (rawAns as any).score ?? (rawAns as any).value ?? 0;
           answers[id] = {
             type: "score",
-            value: s,
-            confidence: (rawAns as any).confidence,
+            value: raw?.score ?? raw?.value ?? 0,
+            confidence,
             raw: rawAns,
           };
         }
@@ -148,7 +109,7 @@ export class JevClient {
 
       return {
         answers,
-        model: response.model || "jev-latest",
+        model: response.model || model,
         usage: response.usage,
         elapsedMs,
       };

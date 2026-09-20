@@ -4,6 +4,7 @@ import type { JevClient } from "./jev.js";
 import type { ToolRouter } from "./router.js";
 import type { SkillRouter } from "./skills.js";
 import type { QuestionConfig } from "./types.js";
+import { credentialHint } from "./platform.js";
 import { JEV_THRESHOLD } from "./skills.js";
 
 export function registerJevTools(
@@ -144,27 +145,23 @@ export function registerJevTools(
           criteria: Type.Optional(Type.Any({ description: "Options, yes/no criterion, or rubric levels" })),
         })
       ),
-      model: Type.Optional(Type.String({ description: "Jev model identifier (default: jev-latest)" })),
+      model: Type.Optional(Type.String({ description: "Jev model identifier (default: platform Jev model)" })),
     }),
     async execute(_toolCallId, params: any, signal, onUpdate) {
       if (!jevClient.isConfigured()) {
         throw new Error(
-          "TypeSafe Jev API key is not configured. Set TYPESAFE_API_KEY environment variable or run /jev login."
+          `Jev API key is not configured for the ${jevClient.platform} platform. ${credentialHint(jevClient.platform)}.`
         );
       }
 
       onUpdate?.({
-        content: [{ type: "text", text: "Querying TypeSafe Jev model..." }],
+        content: [{ type: "text", text: `Querying Jev (${jevClient.platform}) model...` }],
         details: {},
       });
 
       const questions: Record<string, QuestionConfig> = {};
-      for (const [id, q] of Object.entries(params.questions as Record<string, any>)) {
-        questions[id] = {
-          type: q.type,
-          instructions: q.instructions,
-          criteria: q.criteria,
-        };
+      for (const [id, q] of Object.entries(params.questions as Record<string, QuestionConfig>)) {
+        questions[id] = q;
       }
 
       const response = await jevClient.evaluate(

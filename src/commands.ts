@@ -10,6 +10,7 @@ import { designEvaluation } from "./designer.js";
 import type { JevEvaluationRequest } from "./types.js";
 import { JEV_TOOL_NAMES, isJevTool } from "./types.js";
 import { JEV_THRESHOLD } from "./skills.js";
+import { credentialHint } from "./platform.js";
 
 export function registerJevCommands(
   pi: ExtensionAPI,
@@ -44,6 +45,7 @@ export function registerJevCommands(
 
         ctx.ui.notify(
           `Jev Status:\n` +
+            `• Platform: ${jevClient.platform}\n` +
             `• Configured: ${origin ? `Yes (from ${origin})` : "No"}\n` +
             `• Requests in session: ${jevClient.stats.requestsCount}\n` +
             `• Total tokens used: ${jevClient.stats.totalTokens}\n` +
@@ -66,7 +68,7 @@ export function registerJevCommands(
       if (sub === "test" || sub === "eval" || sub === "evaluate") {
         if (!jevClient.isConfigured()) {
           ctx.ui.notify(
-            "Cannot run evaluation: no TypeSafe API key. Set TYPESAFE_API_KEY or write ~/.pi/agent/secrets/typesafe_api_key.",
+            `Cannot run evaluation: no Jev API key for the ${jevClient.platform} platform. ${credentialHint(jevClient.platform)}.`,
             "error"
           );
           return;
@@ -83,11 +85,11 @@ export function registerJevCommands(
             return;
           }
           ctx.ui.notify(
-            `Designed ${Object.keys(request.questions).length} question(s): ${Object.keys(request.questions).join(", ")}\nSending to TypeSafe Jev...`,
+            `Designed ${Object.keys(request.questions).length} question(s): ${Object.keys(request.questions).join(", ")}\nSending to Jev (${jevClient.platform})...`,
             "info"
           );
         } else {
-          ctx.ui.notify("Sending test evaluation request to TypeSafe Jev...", "info");
+          ctx.ui.notify(`Sending test evaluation request to Jev (${jevClient.platform})...`, "info");
           request = {
             state: { message: "Payment processing failed due to credit card expiration." },
             questions: {

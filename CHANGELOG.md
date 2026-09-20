@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Jev API platform selection via `JEV_PLATFORM`: `typesafe` (default), `openrouter`, `cloudflare`, and `vercel`. Tools, skills, gate CLI, typed agent, auto mode, and compaction all follow the selected platform.
+- Per-platform credential resolution from environment variables or Pi secret files (`openrouter_api_key`, `cloudflare_api_token`, `ai_gateway_api_key`), plus `JEV_MODEL` as a model override for any platform.
+- `/jev status` reports the active platform, and error messages name the missing credential for it.
+
+### Changed
+- `/jev status` reports the real credential origin (`$TYPESAFE_API_KEY` or the secret file) instead of always reporting "set in-session".
+
 ## [0.4.0] - 2026-09-18
 
 ### Added

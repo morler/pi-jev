@@ -7,6 +7,7 @@ Semantic tool routing and typed decisions for the [Pi coding agent](https://pi.d
 - **Semantic Tool Router (`jev_find_tools`)**: Automatically searches registered inactive tools and additively activates only the tools needed for the user's specific prompt or workflow.
 - **Skill Discovery (`jev_find_skill`)**: Semantically matches and suggests the most relevant specialized agent skills (`SKILL.md`) for any task without cluttering prompt context.
 - **Typed Judgments (`jev_evaluate`)**: Run fast, calibrated System One decisions directly from the agent using Choice, Noul (yes/no probability), and Score primitives.
+- **Four Jev API Platforms**: Reach Jev directly on the TypeSafe API or through OpenRouter, Cloudflare AI Gateway, or Vercel AI Gateway via `JEV_PLATFORM`. Tools, skills, gates, typed agent, and auto modes all follow the selected platform.
 - **Dynamic Evaluations (`/jev test <prompt>`)**: The active model designs the Jev question schema for a free-form prompt, then Jev evaluates it.
 - **Automatic Mode (opt-in)**: `--jev-auto` / `PI_JEV_AUTO=1` / `/jev auto on` routes tools and suggests skills before every prompt. Off by default.
 - **Automatic Model Mode (opt-in)**: `--jev-auto-model` / `PI_JEV_AUTO_MODEL=1` / `/jev auto-model on` selects fast, balanced, reasoning, long-context, or vision models per prompt. Off by default.
@@ -29,18 +30,33 @@ pi install git:github.com/TheoOliveira/pi-jev
 
 ## Setup
 
-Set your TypeSafe API key via environment variable:
+Pick the Jev API platform with `JEV_PLATFORM` (default `typesafe`) and set that platform's credential:
+
+| `JEV_PLATFORM`        | Credential                                                              | Default model      |
+| --------------------- | ----------------------------------------------------------------------- | ------------------ |
+| `typesafe` (default)  | `TYPESAFE_API_KEY`                                                      | `jev-latest`       |
+| `openrouter`          | `OPENROUTER_API_KEY`                                                    | `typesafe/jev-1.13`|
+| `cloudflare`          | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_GATEWAY_ID` | `typesafe/jev`     |
+| `vercel`              | `AI_GATEWAY_API_KEY`                                                    | `typesafe-ai/jev`  |
 
 ```bash
-export TYPESAFE_API_KEY=ts_...
+export TYPESAFE_API_KEY=ts_...          # default platform
+export JEV_PLATFORM=openrouter          # or cloudflare / vercel
+export OPENROUTER_API_KEY=sk-or-...
+export JEV_MODEL=typesafe/jev-1.13      # optional model override, any platform
 ```
 
-Or store it in Pi's secret store file:
+Or store each credential in Pi's secret store file (`~/.pi/agent/secrets/<name>`):
 
 ```bash
 mkdir -p ~/.pi/agent/secrets
-echo "ts_..." > ~/.pi/agent/secrets/typesafe_api_key
+echo "ts_..."    > ~/.pi/agent/secrets/typesafe_api_key
+echo "sk-or-..." > ~/.pi/agent/secrets/openrouter_api_key
+echo "cf-token"  > ~/.pi/agent/secrets/cloudflare_api_token
+echo "gw-key"    > ~/.pi/agent/secrets/ai_gateway_api_key
 ```
+
+`JEV_PLATFORM` is read when Pi starts. Cloudflare also requires `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_GATEWAY_ID`; TypeSafe additionally honors `TYPESAFE_DEFAULT_MODEL`.
 
 Then check status inside Pi:
 

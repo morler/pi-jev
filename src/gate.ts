@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import { execSync } from "node:child_process";
 import { JevClient } from "./jev.js";
 import type { JevAnswerResult } from "./types.js";
+import { credentialHint } from "./platform.js";
 
 export interface GateOptions {
   criteria: string;
@@ -73,7 +74,7 @@ Options:
   -f, --file <path>          Read state from file
       --json                 Output result in JSON format
       --fail-open            Exit 0 even on API or config error
-  -m, --model <model>        Override Jev model (default: jev-latest)
+  -m, --model <model>        Override Jev model (default: platform Jev model)
   -h, --help                 Show this help message
 
 Examples:
@@ -138,7 +139,9 @@ export async function evaluateGate(options: GateOptions, jevClient?: JevClient):
         error: "Jev unconfigured (fail-open enabled)",
       };
     }
-    throw new Error("TypeSafe Jev API key unconfigured. Set TYPESAFE_API_KEY.");
+    throw new Error(
+      `Jev API key unconfigured for the ${client.platform} platform. ${credentialHint(client.platform)}.`
+    );
   }
 
   const stateText = resolveGateState(options);
