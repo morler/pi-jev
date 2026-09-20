@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `/jev status` and the compaction status line report kept, truncated, and dropped counts.
 - Global switch persistence: `/jev auto|auto-model|compact|auto-agents [on|off]` writes `~/.pi/agent/pi-jev.json` (`PI_CODING_AGENT_DIR` honored), so automatic mode, auto-model, Jev compaction, and agent orchestration start the next Pi session the way you left them. Precedence is CLI flag > `PI_JEV_*` env var > saved file. `/jev status` names the path plus any shadowing env var, and a toggle that an env var would override says so instead of claiming a clean save.
 
+### Changed
+
+- Jev compaction is on by default: installing pi-jev makes `/compact` (manual, threshold, and overflow) produce the Jev summary instead of Pi's built-in one. Pi's summarizer remains the fail-open fallback when Jev is unconfigured or fails, and `/jev compact off` or `PI_JEV_COMPACT=0` restores the opt-in behavior.
+
 ### Fixed
 - A frozen score is now keyed by the goal it was judged against as well as by the message, and all three call sites derive that goal the same way, so a decision is never taken against a task description the message was never judged with. A goal longer than 600 chars (a pasted document) is clipped, since `fitState` never shrinks the goal itself.
 - The score key hashes the whole message rendering, tool-call arguments included: two calls differing only deep in their arguments no longer collide on a stale score.

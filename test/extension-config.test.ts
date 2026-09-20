@@ -30,6 +30,7 @@ test("a saved switch is the default a fresh session starts with", () => {
   for (const env of ["PI_JEV_AUTO", "PI_JEV_AUTO_MODEL", "PI_JEV_COMPACT", "PI_JEV_AGENTS"]) delete process.env[env];
 
   assert.equal(loadFlags().get("jev-auto"), false, "nothing saved means off");
+  assert.equal(loadFlags().get("jev-compact"), true, "fresh install: Jev owns /compact by default");
 
   saveConfig({ auto: true, compact: true });
   const flags = loadFlags();

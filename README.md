@@ -11,7 +11,7 @@ Semantic tool routing and typed decisions for the [Pi coding agent](https://pi.d
 - **Dynamic Evaluations (`/jev test <prompt>`)**: The active model designs the Jev question schema for a free-form prompt, then Jev evaluates it.
 - **Automatic Mode (opt-in)**: `--jev-auto` / `PI_JEV_AUTO=1` / `/jev auto on` routes tools and suggests skills before every prompt. Off by default.
 - **Automatic Model Mode (opt-in)**: `--jev-auto-model` / `PI_JEV_AUTO_MODEL=1` / `/jev auto-model on` selects fast, balanced, reasoning, long-context, or vision models per prompt. Off by default.
-- **Jev Compaction (opt-in)**: `--jev-compact` / `PI_JEV_COMPACT=1` / `/jev compact on` uses Jev to retain important tool history during `/compact`, while Pi's normal compaction remains the safe fallback.
+- **Jev Compaction (on by default)**: after install, `/compact` runs Jev compaction — important tool history is retained selectively while user intent is preserved — with Pi's built-in summary as fail-open fallback. `/jev compact off` or `PI_JEV_COMPACT=0` restores Pi's built-in compaction.
 - **Agent Orchestration & Typed Agent**: `/jev agents <task>` dispatches `pi-subagents` orchestration; register `agent: "jev"` in workflows for instant sub-second typed judgments without LLM overhead.
 - **Post-Run Gate Check (`jev-gate` CLI)**: Fast binary for subagent `gate` parameters (`npx pi-jev-gate -c "criteria"`). Checks git diff / output and exits 0 on pass or 1 on fail.
 - **On-Demand & Safe**: Runs when called. No unsolicited per-turn API token costs. Fails open gracefully to local keyword shortlists if Jev is unreachable or unconfigured.
@@ -151,7 +151,7 @@ Execution is asynchronous; completion is reported back into the session. Automat
 
 ### Jev Compaction
 
-`/jev compact on` enables Jev-guided compaction. Every message Pi is about to discard (`preparation.messagesToSummarize`) is scored by Jev, and the score picks one of three bands: **keep** (its text in the custom summary, with a marker when it was longer than the per-message cap), **truncate** (head plus a re-run marker naming how much was dropped), or **drop** (absent from the summary). Nothing is shortened silently. User prose is intent and is never dropped. The feature preserves Pi's `firstKeptEntryId` boundary and falls back to Pi's built-in summary when Jev is unconfigured, fails, or returns unusable data. It does not silently truncate context.
+Jev compaction is on by default: after install, `/compact` produces the Jev summary instead of Pi's built-in one. `/jev compact off` (persisted) or `PI_JEV_COMPACT=0` restores the built-in path. Every message Pi is about to discard (`preparation.messagesToSummarize`) is scored by Jev, and the score picks one of three bands: **keep** (its text in the custom summary, with a marker when it was longer than the per-message cap), **truncate** (head plus a re-run marker naming how much was dropped), or **drop** (absent from the summary). Nothing is shortened silently. User prose is intent and is never dropped. The feature preserves Pi's `firstKeptEntryId` boundary and falls back to Pi's built-in summary when Jev is unconfigured, fails, or returns unusable data. It does not silently truncate context.
 
 Scores are frozen by content hash in `.pi/pi-jev.compact.json` (gitignored), keyed by the message **and the goal it was judged against**: an unchanged message under the same task is never judged twice, while a different task is judged again, because the task is part of the question. Records older than a week are dropped when the cache is written. Tune the bands with environment variables:
 
@@ -204,7 +204,7 @@ Auto-model uses task signals, attached images, and context size to choose the be
 - `/jev disable` — Disables Jev tools for the active session.
 - `/jev auto [on|off]` — Turns automatic per-prompt tool/skill routing on or off (no argument flips it).
 - `/jev auto-model [on|off]` — Turns automatic model selection on or off (no argument flips it).
-- `/jev compact [on|off]` — Turns Jev-guided compaction on or off. Run `/compact` after enabling.
+- `/jev compact [on|off]` — Turns Jev-guided compaction on or off (on by default; `/compact` runs it).
 - `/jev compact status` — Shows in-place pruning state: pressure episode, agent-run flag, no-cache streak, pending changes, and the cache/judge timings.
 - `/jev compact reset` — Clears the frozen scores, the applied decisions, the breaker, and the pressure state.
 - `/jev compact now` — Scores the history and applies the pruning decisions immediately, accepting one prompt-cache miss.

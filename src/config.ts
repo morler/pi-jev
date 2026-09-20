@@ -11,6 +11,15 @@ export const SWITCHES = {
 } as const;
 
 export type JevConfigKey = keyof typeof SWITCHES;
+
+/** Built-in switch defaults: what a fresh install starts with when no env var and no saved file says anything. */
+const SWITCH_DEFAULTS: Record<JevConfigKey, boolean> = {
+  auto: false,
+  autoModel: false,
+  compact: true,
+  agents: false,
+};
+
 export type JevConfig = Partial<Record<JevConfigKey, boolean>>;
 
 const TRUTHY = new Set(["1", "true", "yes", "on"]);
@@ -60,18 +69,19 @@ export function saveConfig(patch: JevConfig): JevConfig {
 }
 
 /**
- * A switch default: an env var that is set at all wins (so PI_JEV_AUTO=0 is a hard off),
- * then the saved file, then off. An explicit CLI flag still overrides both.
+ * A switch default: an env var that is set at all wins (so PI_JEV_COMPACT=0 is a hard off),
+ * then the saved file, then the switch's built-in default (compact on, the rest off). An explicit
+ * CLI flag still overrides both.
  */
 export function resolveSwitch(key: JevConfigKey, saved: JevConfig): boolean {
   const raw = process.env[SWITCHES[key]];
   if (raw !== undefined) return isTruthy(raw);
   // The file is hand-editable: coerce the way the env path does, so `"compact": "off"` cannot enable a
-  // switch just by being a truthy string while `"on"` still means on.
+  // switch just by being a truthy string while "on" still means on.
   const value = saved[key];
   if (typeof value === "boolean") return value;
   if (typeof value === "string") return isTruthy(value);
-  return false;
+  return SWITCH_DEFAULTS[key];
 }
 
 /** True when a set env var would override `value` on the next start, so a toggle must say so now. */

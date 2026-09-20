@@ -15,7 +15,7 @@ import { loadConfig, resolveSwitch, saveConfig, type JevConfigKey } from "../src
 
 export default function (pi: ExtensionAPI) {
   const saved = loadConfig();
-  /** CLI flag > env var (when set at all) > saved global config > off. */
+  /** CLI flag > env var (when set at all) > saved global config > the switch's default (compact on, the rest off). */
   const flagDefault = (key: JevConfigKey): boolean => resolveSwitch(key, saved);
 
   const jevClient = new JevClient();
@@ -29,7 +29,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerFlag("jev-compact", {
-    description: "Use Jev to preserve important tool history during /compact",
+    description: "Replace /compact's summary with Jev compaction (on by default; PI_JEV_COMPACT=0 or /jev compact off restores Pi's built-in)",
     type: "boolean",
     default: flagDefault("compact"),
   });
