@@ -232,7 +232,14 @@ export default function (pi: ExtensionAPI) {
     }
 
     const result = await compactor.compact(event, ctx);
-    if (!result.summary) return;
+    if (!result.summary) {
+      // Fail-open: Pi's summarizer takes over. Only an unexpected failure is worth a shout; an off
+      // switch or a missing key is the user's own configuration, and a history with no text to judge
+      // is not a failure either.
+      if (result.skipped === "error") ctx.ui.setStatus("jev", "jev: compact failed → Pi's summarizer ran");
+      else if (result.skipped === "empty") ctx.ui.setStatus("jev", "jev: nothing to compact → Pi's summarizer ran");
+      return;
+    }
     lastCompact = { kept: result.kept, truncated: result.truncated, dropped: result.dropped };
     ctx.ui.setStatus("jev", `jev: compact ${result.kept} kept · ${result.truncated} trunc · ${result.dropped} drop`);
     return {

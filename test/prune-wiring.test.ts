@@ -12,11 +12,12 @@ import { goalKey } from "../src/compact.js";
  * The context hook never talks to Jev, so a sidecar written by hand drives it, and a compaction
  * event with an empty preparation never reaches the summary path either.
  */
-function loadExtension(cwd: string) {
+function loadExtension(cwd: string, compactionOn = true) {
   const handlers = new Map<string, any[]>();
+  const statuses: string[] = [];
   const pi: any = {
     registerFlag: () => {},
-    getFlag: (name: string) => name === "jev-compact", // compaction on, everything else off
+    getFlag: (name: string) => name === "jev-compact" && compactionOn, // compaction on, everything else off
     registerTool: () => {},
     registerCommand: () => {},
     on: (event: string, handler: any) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
@@ -28,14 +29,14 @@ function loadExtension(cwd: string) {
   };
   register(pi);
 
-  const ctx: any = { cwd, ui: { setStatus: () => {} }, sessionManager: {}, signal: undefined };
+  const ctx: any = { cwd, ui: { setStatus: (_key: string, value: string) => statuses.push(value) }, sessionManager: {}, signal: undefined };
   const fire = (event: string, payload: any) => Promise.all((handlers.get(event) ?? []).map((h) => h(payload, ctx)));
   /** The messages array a context hook returned, if it rewrote anything. */
   const view = async (messages: any[]) => {
     const out = await fire("context", { messages });
     return (out.find((r: any) => r?.messages) as any)?.messages as any[] | undefined;
   };
-  return { fire, view, ctx };
+  return { fire, view, ctx, statuses };
 }
 
 const user = (text: string) => ({ role: "user", content: text });
@@ -201,5 +202,33 @@ test("threshold compaction is cancelled inside the ceiling, and only for thresho
     ctx.getContextUsage = () => usage(1);
     const manual = await fire("session_before_compact", { reason: "manual", preparation: {} });
     assert.equal(manual.filter((r: any) => r?.cancel).length, 0, "a user-asked compaction is never cancelled");
+  });
+});
+
+test("a failed compaction is announced, and a switched-off one is not", async () => {
+  const cwd = tempCwd("pi-jev-notice-");
+  const messages = [user("task"), call("c1"), result("c1", "x".repeat(200))];
+  const preparation = { messagesToSummarize: messages, turnPrefixMessages: [] };
+  const previous = process.env.JEV_COMPACT_TIMEOUT;
+
+  await withKey(async () => {
+    // A request that aborts at once: the Jev call throws, Pi's summarizer takes over, and the user is
+    // told - a built-in summary must not pass for Jev's own.
+    process.env.JEV_COMPACT_TIMEOUT = "1";
+    const failing = loadExtension(cwd);
+    const out = await failing.fire("session_before_compact", { reason: "manual", preparation, branchEntries: [] });
+    assert.equal(out.filter((r: any) => r?.compaction).length, 0, "no summary, so Pi's summarizer runs");
+    assert.ok(
+      failing.statuses.some((status) => status.includes("compact failed")),
+      "the failure is announced"
+    );
+
+    // A switch the user threw is configuration, not failure: it must not nag on every /compact.
+    const off = loadExtension(cwd, false);
+    await off.fire("session_before_compact", { reason: "manual", preparation, branchEntries: [] });
+    assert.deepEqual(off.statuses, [], "a switched-off compaction says nothing");
+  }).finally(() => {
+    if (previous === undefined) delete process.env.JEV_COMPACT_TIMEOUT;
+    else process.env.JEV_COMPACT_TIMEOUT = previous;
   });
 });
