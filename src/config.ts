@@ -8,6 +8,7 @@ export const SWITCHES = {
   autoModel: "PI_JEV_AUTO_MODEL",
   compact: "PI_JEV_COMPACT",
   agents: "PI_JEV_AGENTS",
+  toolGuard: "PI_JEV_TOOL_GUARD",
 } as const;
 
 export type JevConfigKey = keyof typeof SWITCHES;
@@ -18,6 +19,7 @@ const SWITCH_DEFAULTS: Record<JevConfigKey, boolean> = {
   autoModel: false,
   compact: true,
   agents: false,
+  toolGuard: false,
 };
 
 export type JevConfig = Partial<Record<JevConfigKey, boolean>>;

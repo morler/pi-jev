@@ -12,6 +12,7 @@ import { applyPrune, cancelThresholdCompaction, realContextBoundary, reconcilePr
 import { AgentOrchestrator } from "../src/orchestrator.js";
 import { JevAgentHandler } from "../src/agent.js";
 import { loadConfig, resolveSwitch, saveConfig, type JevConfigKey } from "../src/config.js";
+import { ToolGuard } from "../src/tool-guard.js";
 
 export default function (pi: ExtensionAPI) {
   const saved = loadConfig();
@@ -26,6 +27,12 @@ export default function (pi: ExtensionAPI) {
     description: "Enable explicit and automatic orchestration of available agents",
     type: "boolean",
     default: flagDefault("agents"),
+  });
+
+  pi.registerFlag("jev-tool-guard", {
+    description: "Validate tool calls with Jev System One to prevent hallucinations",
+    type: "boolean",
+    default: flagDefault("toolGuard"),
   });
 
   pi.registerFlag("jev-compact", {
@@ -57,6 +64,9 @@ export default function (pi: ExtensionAPI) {
   const compactor = new JevCompactor(jevClient, Boolean(pi.getFlag("jev-compact")));
   const agents = new AgentOrchestrator(pi, jevClient, Boolean(pi.getFlag("jev-agents")));
   agents.installCompletionNotice();
+
+  const toolGuard = new ToolGuard(pi, jevClient, Boolean(pi.getFlag("jev-tool-guard")));
+  toolGuard.install();
 
   const agentHandler = new JevAgentHandler(pi, jevClient);
   agentHandler.install();
@@ -195,7 +205,7 @@ export default function (pi: ExtensionAPI) {
   };
 
   registerJevTools(pi, jevClient, router, skillRouter);
-  registerJevCommands(pi, jevClient, skillRouter, auto, autoModel, compactor, agents, persistSwitch, pruneControl);
+  registerJevCommands(pi, jevClient, skillRouter, auto, autoModel, compactor, agents, persistSwitch, pruneControl, toolGuard);
 
   pi.registerTool({
     name: "jev_compact_now",

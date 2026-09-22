@@ -5,6 +5,7 @@ import type { AutoJev } from "./auto.js";
 import type { AutoModelRouter } from "./model-router.js";
 import type { JevCompactor } from "./compact.js";
 import type { AgentOrchestrator } from "./orchestrator.js";
+import type { ToolGuard } from "./tool-guard.js";
 import { designEvaluation } from "./designer.js";
 import type { JevEvaluationRequest } from "./types.js";
 import { JEV_TOOL_NAMES, isJevTool } from "./types.js";
@@ -42,7 +43,8 @@ export function registerJevCommands(
   compactor?: JevCompactor,
   agents?: AgentOrchestrator,
   persistSwitch?: (key: JevConfigKey, value: boolean) => boolean,
-  prune?: PruneControl
+  prune?: PruneControl,
+  toolGuard?: ToolGuard
 ): void {
   const agentMode = agents ?? { enabled: false, setEnabled: () => {}, dispatch: async () => ({ accepted: false, error: "disabled" }) };
   const compactMode = compactor ?? { enabled: false, setEnabled: () => {} };
@@ -59,6 +61,7 @@ export function registerJevCommands(
       : " Saved to the global config.";
   };
 
+  const guardMode = toolGuard ?? { enabled: false, setEnabled: () => {} };
   pi.registerCommand("jev", {
     description: "Manage TypeSafe Jev integration (status, enable, disable, auto, test, skills)",
     handler: async (args: string, ctx: ExtensionCommandContext) => {
@@ -66,7 +69,7 @@ export function registerJevCommands(
       const sub = (tokens[0] ?? "").toLowerCase();
       const rest = tokens.slice(1).join(" ");
       const usage =
-        "Available options: /jev status, /jev skills [query], /jev test [prompt], /jev enable, /jev disable, /jev auto [on|off], /jev auto-model [on|off], /jev compact [on|off|status|reset|now], /jev auto-agents [on|off], /jev agents [task]";
+        "Available options: /jev status, /jev skills [query], /jev test [prompt], /jev enable, /jev disable, /jev auto [on|off], /jev auto-model [on|off], /jev compact [on|off|status|reset|now], /jev auto-agents [on|off], /jev tool-guard [on|off], /jev agents [task]";
 
       if (sub === "status" || sub === "") {
         const origin = jevClient.getKeyOrigin();
@@ -86,6 +89,7 @@ export function registerJevCommands(
             `• Total tokens used: ${jevClient.stats.totalTokens}\n` +
             `• Auto mode: ${auto.enabled ? "on" : "off"}${auto.enabled && !origin ? " (inactive: Jev unconfigured)" : ""}\n` +
             `• Auto-model: ${modelMode.enabled ? "on" : "off"}\n` +
+            `• Tool guard: ${guardMode.enabled ? "on" : "off"}\n` +
             `• Jev compaction: ${compactMode.enabled ? "on" : "off"}\n` +
             (prune ? `• ${prune.counts()}\n` : "") +
             `• Agent orchestration: ${agentMode.enabled ? "on" : "off"}\n` +
@@ -209,6 +213,18 @@ export function registerJevCommands(
         }
         const result = await agentMode.dispatch(rest, ctx);
         if (!result.accepted) ctx.ui.notify(`Agent orchestration unavailable: ${result.error ?? "unknown error"}`, "warning");
+        return;
+      }
+
+      if (sub === "tool-guard" || sub === "toolguard" || sub === "guard") {
+        const arg = rest.toLowerCase();
+        if (arg !== "" && arg !== "on" && arg !== "off") {
+          ctx.ui.notify(`Unknown /jev tool-guard argument "${rest}". ${usage}`, "warning");
+          return;
+        }
+        const enabled = arg === "on" ? true : arg === "off" ? false : !guardMode.enabled;
+        guardMode.setEnabled(enabled);
+        ctx.ui.notify(`Jev tool guard ${enabled ? "enabled" : "disabled"}.`, "info");
         return;
       }
 
