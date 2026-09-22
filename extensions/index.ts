@@ -11,7 +11,7 @@ import { JevCompactor, branchMessagesOf, pruneSchedule } from "../src/compact.js
 import { applyPrune, cancelThresholdCompaction, realContextBoundary, reconcilePressure, type ContextBoundary, type Decision, type PressureState } from "../src/prune.js";
 import { AgentOrchestrator } from "../src/orchestrator.js";
 import { JevAgentHandler } from "../src/agent.js";
-import { loadConfig, resolveSwitch, saveConfig, type JevConfigKey } from "../src/config.js";
+import { loadConfig, loadModelPool, resolveSwitch, saveConfig, type JevConfigKey } from "../src/config.js";
 import { ToolGuard } from "../src/tool-guard.js";
 
 export default function (pi: ExtensionAPI) {
@@ -60,7 +60,7 @@ export default function (pi: ExtensionAPI) {
     skillRouter,
     Boolean(pi.getFlag("jev-auto"))
   );
-  const autoModel = new AutoModelRouter(pi, Boolean(pi.getFlag("jev-auto-model")));
+  const autoModel = new AutoModelRouter(pi, Boolean(pi.getFlag("jev-auto-model")), loadModelPool(), jevClient);
   const compactor = new JevCompactor(jevClient, Boolean(pi.getFlag("jev-compact")));
   const agents = new AgentOrchestrator(pi, jevClient, Boolean(pi.getFlag("jev-agents")));
   agents.installCompletionNotice();
@@ -324,7 +324,7 @@ export default function (pi: ExtensionAPI) {
 
     const modelResult = await autoModel.route(event.prompt, ctx, { hasImages: Boolean(event.images?.length) });
     if (modelResult.changed) {
-      ctx.ui.setStatus("jev", `jev: ${modelResult.profile} → ${modelResult.model?.id ?? "model"}`);
+      ctx.ui.setStatus("jev", `jev: ${modelResult.tier} → ${modelResult.model?.id ?? "model"}`);
     }
 
     const result = await auto.route(event.prompt, ctx, ctx.signal);

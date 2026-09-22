@@ -1,35 +1,28 @@
 import type { ExtensionContext, ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import type { JevClient } from "./jev.js";
 
-export type ModelProfile = "fast" | "balanced" | "reasoning" | "long-context" | "vision";
+export type ModelTier = "light" | "heavy";
 export type ModelErrorKind = "quota" | "rate-limit" | "context-limit" | "unavailable" | "timeout" | "auth" | "unknown";
 
 export interface ModelRouteResult {
   changed: boolean;
-  profile: ModelProfile;
-  model?: Model<any>;
+  tier: ModelTier | null;
+  model?: Model<Api>;
   reason: string;
-  skipped?: "disabled" | "busy" | "no-model" | "low-confidence" | "error";
+  skipped?: "disabled" | "busy" | "unconfigured" | "no-match" | "no-judgment" | "no-model" | "error";
 }
 
-const PROFILE_HINTS: Record<ModelProfile, RegExp> = {
-  fast: /^(hi|hello|list|rename|format|small|simple|quick|what is|how do i)/i,
-  reasoning: /\b(plan|planning|architect|architecture|debug|diagnos|compare|trade-?off|design|review|security|why|analy[sz]|complex|refactor)\b/i,
-  "long-context": /\b(full repo|entire repo|large diff|long document|all files|context|migration|codebase|many files)\b/i,
-  vision: /\b(image|screenshot|photo|diagram|visual|picture|ui mockup|wireframe)\b/i,
-  balanced: /.*/,
-};
-
-export function classifyModelNeed(prompt: string, contextChars = 0, hasImages = false): { profile: ModelProfile; confidence: number; reason: string } {
-  if (hasImages || PROFILE_HINTS.vision.test(prompt)) return { profile: "vision", confidence: 0.95, reason: "image input or visual task" };
-  if (contextChars > 120_000 || PROFILE_HINTS["long-context"].test(prompt)) return { profile: "long-context", confidence: 0.9, reason: "large context task" };
-  if (PROFILE_HINTS.reasoning.test(prompt)) return { profile: "reasoning", confidence: 0.82, reason: "planning or deep reasoning task" };
-  if (PROFILE_HINTS.fast.test(prompt) && prompt.length < 240) return { profile: "fast", confidence: 0.78, reason: "short simple task" };
-  return { profile: "balanced", confidence: 0.55, reason: "general task" };
-}
+/** Noul probability at or above this means the prompt wants the strong pool model. */
+const HEAVY_P = 0.6;
+/** Noul probability at or below this means the fast pool model is plenty. */
+const LIGHT_P = 0.3;
+/** System-prompt size (chars) that counts as a large-context task without asking Jev. */
+const BIG_CONTEXT_CHARS = 120_000;
 
 export function classifyModelError(error: unknown): ModelErrorKind {
-  const text = String((error as any)?.message ?? error).toLowerCase();
+  // SAFETY: providers throw both Error instances and plain objects carrying .message; read it off either shape.
+  const text = String((error as unknown as { message?: string })?.message ?? error).toLowerCase();
   if (/context|too many tokens|token limit|maximum.*token|prompt too long/.test(text)) return "context-limit";
   if (/quota|credit|billing|insufficient.*fund|resource_exhausted/.test(text)) return "quota";
   if (/rate.?limit|too many requests|429/.test(text)) return "rate-limit";
@@ -39,31 +32,31 @@ export function classifyModelError(error: unknown): ModelErrorKind {
   return "unknown";
 }
 
-function modelScore(model: Model<any>, profile: ModelProfile, contextChars: number, hasImages: boolean): number {
-  const image = model.input?.includes("image") ? 4 : 0;
-  const reasoning = model.reasoning ? 3 : 0;
-  const context = Math.min(model.contextWindow / 100_000, 5);
-  if (hasImages && !model.input?.includes("image")) return -100;
-  if (profile === "vision") return image * 10 + reasoning;
-  if (profile === "long-context") return context * 10 + image + reasoning;
-  if (profile === "reasoning") return reasoning * 10 + context + image;
-  if (profile === "fast") return (model.reasoning ? 0 : 3) + (model.cost?.input ?? 0) * -0.01;
-  return reasoning + context + image;
-}
-
+/**
+ * Switches between a two-entry candidate pool ([light, heavy]; see loadModelPool). The tier
+ * comes from one Jev noul judgment per prompt ("does this need a strong reasoning model?");
+ * image prompts and oversized contexts shortcut to heavy without the call. Between the
+ * thresholds the answer is a coin flip, so the session simply stays on its current model.
+ * Every failure path — Jev down, no key, no pool match, failed switch — keeps the current
+ * model and never blocks the turn.
+ */
 export class AutoModelRouter {
   public enabled: boolean;
   private running = false;
   private blocked = new Map<string, number>();
-  public last?: ModelRouteResult;
 
-  constructor(private pi: ExtensionAPI, enabled = false) {
+  constructor(
+    private pi: ExtensionAPI,
+    enabled: boolean,
+    private pool: string[],
+    private jevClient: JevClient
+  ) {
     this.enabled = enabled;
   }
 
   public setEnabled(enabled: boolean): void { this.enabled = enabled; }
 
-  public recordProviderResponse(status: number, model?: Model<any>): ModelErrorKind | undefined {
+  public recordProviderResponse(status: number, model?: Model<Api>): ModelErrorKind | undefined {
     if (!model || status < 400) return undefined;
     const kind: ModelErrorKind = status === 408 || status === 504 ? "timeout" : status === 401 || status === 403 ? "auth" : status === 413 ? "context-limit" : status === 429 ? "rate-limit" : status === 402 ? "quota" : status >= 500 ? "unavailable" : "unknown";
     if (["quota", "rate-limit", "context-limit", "unavailable", "timeout"].includes(kind)) {
@@ -72,35 +65,83 @@ export class AutoModelRouter {
     return kind;
   }
 
+  /** The pool entry for a tier: index 0 is light, index 1 heavy (extra entries are ignored). */
+  private poolEntry(tier: ModelTier): string | undefined {
+    return this.pool[tier === "heavy" ? 1 : 0];
+  }
+
+  /** First model matching a pool entry: provider-pinned entries match provider+id exactly (a HuggingFace mirror or a "-plus" variant can never win); bare entries stay a substring so version suffixes still hit. */
+  private pick(tier: ModelTier, models: Model<Api>[], hasImages: boolean): Model<Api> | undefined {
+    const entry = this.poolEntry(tier);
+    if (!entry) return undefined;
+    const slash = entry.indexOf("/");
+    const wantProvider = slash > 0 ? entry.slice(0, slash) : undefined;
+    const wantId = slash > 0 ? entry.slice(slash + 1) : entry;
+    return models.find(
+      (m) =>
+        (wantProvider ? m.provider === wantProvider && m.id === wantId : m.id.includes(wantId)) &&
+        (!hasImages || Boolean(m.input?.includes("image")))
+    );
+  }
+
+  /** Tier judgment: deterministic shortcuts first, else one Jev noul call with two thresholds. */
+  private async classify(prompt: string, contextChars: number, hasImages: boolean, signal?: AbortSignal): Promise<{ tier: ModelTier | null; reason: string }> {
+    if (hasImages) return { tier: "heavy", reason: "image input" };
+    if (contextChars > BIG_CONTEXT_CHARS) return { tier: "heavy", reason: "oversized context" };
+    try {
+      const response = await this.jevClient.evaluate(
+        {
+          state: { prompt, context_chars: contextChars },
+          questions: {
+            strong_model: {
+              type: "noul",
+              instructions:
+                "Probability this prompt needs a strong reasoning model instead of a fast cheap one. Strong-model work: planning, architecture, debugging, analysis, code review, refactoring, migrations, large-context synthesis, or non-trivial reasoning in any language. Fast-model work: greetings, listings, renames, formatting, trivial lookups and edits.",
+            },
+          },
+        },
+        signal
+      );
+      const p = Number(response.answers["strong_model"]?.value);
+      if (!Number.isFinite(p)) return { tier: null, reason: "Jev returned no usable probability" };
+      if (p >= HEAVY_P) return { tier: "heavy", reason: `Jev P=${p.toFixed(2)} strong-model work` };
+      if (p <= LIGHT_P) return { tier: "light", reason: `Jev P=${p.toFixed(2)} fast-model work` };
+      return { tier: null, reason: `Jev P=${p.toFixed(2)} ambiguous — keeping current model` };
+    } catch {
+      return { tier: null, reason: "Jev classification failed — keeping current model" };
+    }
+  }
+
   public async route(prompt: string, ctx: ExtensionContext, options: { hasImages?: boolean } = {}): Promise<ModelRouteResult> {
     const current = ctx.model;
-    const fallback: ModelRouteResult = { changed: false, profile: "balanced", reason: "model selection skipped" };
+    const fallback: ModelRouteResult = { changed: false, tier: null, reason: "model selection skipped" };
     if (!this.enabled) return { ...fallback, skipped: "disabled" };
     if (this.running) return { ...fallback, skipped: "busy" };
-    if (!prompt.trim()) return { ...fallback, skipped: "low-confidence" };
+    if (!this.jevClient.isConfigured()) return { ...fallback, skipped: "unconfigured" };
+    if (!prompt.trim()) return { ...fallback, skipped: "no-match" };
 
     this.running = true;
     try {
       const contextChars = (ctx.getSystemPrompt?.() ?? "").length;
-      const need = classifyModelNeed(prompt, contextChars, Boolean(options.hasImages));
-      if (need.confidence < 0.6) return { ...fallback, profile: need.profile, reason: need.reason, skipped: "low-confidence" };
+      const need = await this.classify(prompt, contextChars, Boolean(options.hasImages), ctx.signal);
+      if (!need.tier) return { ...fallback, reason: need.reason, skipped: "no-judgment" };
 
       const models = (ctx.scopedModels?.length ? ctx.scopedModels.map((x) => x.model) : ctx.modelRegistry.getAvailable())
         .filter((model) => !this.blocked.get(`${model.provider}/${model.id}`) || (this.blocked.get(`${model.provider}/${model.id}`) ?? 0) < Date.now());
-      const target = models.sort((a, b) => modelScore(b, need.profile, contextChars, Boolean(options.hasImages)) - modelScore(a, need.profile, contextChars, Boolean(options.hasImages)))[0];
-      if (!target) return { ...fallback, profile: need.profile, reason: "no compatible model", skipped: "no-model" };
-      if (current?.provider === target.provider && current?.id === target.id) return { changed: false, profile: need.profile, model: target, reason: need.reason };
+      const target = this.pick(need.tier, models, Boolean(options.hasImages));
+      if (!target) return { ...fallback, tier: need.tier, reason: `no available model for pool entry "${this.poolEntry(need.tier) ?? "none"}"`, skipped: "no-model" };
+      if (current?.provider === target.provider && current?.id === target.id) return { changed: false, tier: need.tier, model: target, reason: need.reason };
 
       try {
         await this.pi.setModel(target);
-        return { changed: true, profile: need.profile, model: target, reason: need.reason };
+        return { changed: true, tier: need.tier, model: target, reason: need.reason };
       } catch (error) {
         const kind = classifyModelError(error);
         this.blocked.set(`${target.provider}/${target.id}`, Date.now() + (kind === "rate-limit" || kind === "quota" ? 600_000 : 60_000));
-        return { changed: false, profile: need.profile, model: current, reason: `model switch failed: ${kind}`, skipped: "error" };
+        return { changed: false, tier: need.tier, model: current, reason: `model switch failed: ${kind}`, skipped: "error" };
       }
-    } catch {
-      return { ...fallback, skipped: "error" };
+    } catch (error) {
+      return { ...fallback, reason: `model selection failed: ${error instanceof Error ? error.message : String(error)}`, skipped: "error" };
     } finally {
       this.running = false;
     }

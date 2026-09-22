@@ -103,3 +103,18 @@ export function envOverrides(): string[] {
     envShadowed(key, resolveSaved(key, saved)) ? [`$${SWITCHES[key]}`] : []
   );
 }
+
+/** Default auto-model candidate pool: [light, heavy]. */
+export const DEFAULT_MODEL_POOL = ["glm-5.5-flash", "deepseek-v4-flash"];
+
+/**
+ * The auto-model candidate pool, saved as an ordered "autoModelPool" array in pi-jev.json:
+ * index 0 answers light tasks, index 1 heavy ones. A missing, empty, or malformed entry
+ * falls back to the built-in default.
+ */
+export function loadModelPool(): string[] {
+  const raw = readJsonObject(configPath())["autoModelPool"];
+  if (!Array.isArray(raw)) return DEFAULT_MODEL_POOL;
+  const pool = raw.filter((x): x is string => typeof x === "string" && x.trim() !== "").map((x) => x.trim());
+  return pool.length > 0 ? pool : DEFAULT_MODEL_POOL;
+}

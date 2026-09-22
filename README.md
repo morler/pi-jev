@@ -10,13 +10,13 @@ Semantic tool routing and typed decisions for the [Pi coding agent](https://pi.d
 - **Four Jev API Platforms**: Reach Jev directly on the TypeSafe API or through OpenRouter, Cloudflare AI Gateway, or Vercel AI Gateway via `JEV_PLATFORM`. Tools, skills, gates, typed agent, and auto modes all follow the selected platform.
 - **Dynamic Evaluations (`/jev test <prompt>`)**: The active model designs the Jev question schema for a free-form prompt, then Jev evaluates it.
 - **Automatic Mode (opt-in)**: `--jev-auto` / `PI_JEV_AUTO=1` / `/jev auto on` routes tools and suggests skills before every prompt. Off by default.
-- **Automatic Model Mode (opt-in)**: `--jev-auto-model` / `PI_JEV_AUTO_MODEL=1` / `/jev auto-model on` selects fast, balanced, reasoning, long-context, or vision models per prompt. Off by default.
+- **Automatic Model Mode (opt-in)**: `--jev-auto-model` / `PI_JEV_AUTO_MODEL=1` / `/jev auto-model on` asks Jev to classify each prompt (one System One request; image prompts and oversized contexts skip the call and count as heavy) and picks between two candidate models — light for simple tasks, heavy for demanding ones (pool defaults to `glm-5.5-flash` + `deepseek-v4-flash`; override with `autoModelPool` in `pi-jev.json`). Off by default.
 - **Tool Call Guard (opt-in)**: `--jev-tool-guard` / `PI_JEV_TOOL_GUARD=1` / `/jev tool-guard on` intercepts tool calls with Jev to detect hallucinations and enhance failed results. Off by default.
 - **Jev Compaction (on by default)**: after install, `/compact` runs Jev compaction — important tool history is retained selectively while user intent is preserved — with Pi's built-in summary as fail-open fallback. `/jev compact off` or `PI_JEV_COMPACT=0` restores Pi's built-in compaction.
 - **Agent Orchestration & Typed Agent**: `/jev agents <task>` dispatches `pi-subagents` orchestration; register `agent: "jev"` in workflows for instant sub-second typed judgments without LLM overhead.
 - **Post-Run Gate Check (`jev-gate` CLI)**: Fast binary for subagent `gate` parameters (`npx pi-jev-gate -c "criteria"`). Checks git diff / output and exits 0 on pass or 1 on fail.
 - **On-Demand & Safe**: Runs when called. No unsolicited per-turn API token costs. Fails closed safely: if Jev is unreachable or unconfigured, tool routing does not blindly activate unjudged tools and reports zero confidence on keyword fallbacks.
-- **Cost Clarity**: Tool routing (`jev_find_tools`, `/jev auto`), skill discovery (`jev_find_skill`), evaluations (`jev_evaluate`), Jev subagents (`agent: "jev"`), and gate checks (`pi-jev-gate`) consume a Jev System One request. Heuristic fast-paths like `/jev auto-model` and topology fallback classify locally without spending Jev requests.
+- **Cost Clarity**: Tool routing (`jev_find_tools`, `/jev auto`), skill discovery (`jev_find_skill`), evaluations (`jev_evaluate`), Jev subagents (`agent: "jev"`), and gate checks (`pi-jev-gate`) consume a Jev System One request. Auto-model spends one extra Jev request per prompt to pick the model tier; the topology fallback stays local.
 
 ## Installation
 
