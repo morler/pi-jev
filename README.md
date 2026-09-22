@@ -152,6 +152,8 @@ if (triage.primaryValue === "bug") {
 
 Execution is asynchronous; completion is reported back into the session. Automatic dispatch is opt-in via `--jev-agents` / `PI_JEV_AGENTS=1` or `/jev auto-agents on`.
 
+Under the hood the command builds a backend-neutral `WorkflowPlan` (JSON nodes with `id`, `agent`, `needs`, and literal prompt `segments` — task text passes through verbatim, never parsed) and hands it to an `OrchestrationBackend`. The default backend compiles the plan to a `pi-subagents` workflow script and dispatches it over the `subagents:rpc:v1` event pair. Another subagent extension can take over by implementing `spawn(plan)` (plus optional `onCompleted`) and injecting it into `AgentOrchestrator` — no pi-jev changes required.
+
 ### Jev Compaction
 
 Jev compaction is on by default: after install, `/compact` produces the Jev summary instead of Pi's built-in one. `/jev compact off` (persisted) or `PI_JEV_COMPACT=0` restores the built-in path. Every message Pi is about to discard (`preparation.messagesToSummarize`) is scored by Jev, and the score picks one of three bands: **keep** (its text in the custom summary, with a marker when it was longer than the per-message cap), **truncate** (head plus a re-run marker naming how much was dropped), or **drop** (absent from the summary). Nothing is shortened silently. User prose is intent and is never dropped. The feature preserves Pi's `firstKeptEntryId` boundary and falls back to Pi's built-in summary when Jev is unconfigured, fails, or returns unusable data. It does not silently truncate context.
