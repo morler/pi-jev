@@ -113,7 +113,7 @@ export class ToolRouter {
             activated.push(toolName);
           }
         }
-      } catch (err) {
+      } catch {
         fallbackUsed = true;
       }
     } else {
