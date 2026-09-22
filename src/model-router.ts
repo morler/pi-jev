@@ -17,9 +17,6 @@ export interface ModelRouteResult {
 const HEAVY_P = 0.6;
 /** Noul probability at or below this means the fast pool model is plenty. */
 const LIGHT_P = 0.3;
-/** System-prompt size (chars) that counts as a large-context task without asking Jev. */
-const BIG_CONTEXT_CHARS = 120_000;
-
 export function classifyModelError(error: unknown): ModelErrorKind {
   // SAFETY: providers throw both Error instances and plain objects carrying .message; read it off either shape.
   const text = String((error as unknown as { message?: string })?.message ?? error).toLowerCase();
@@ -39,8 +36,8 @@ function blockDurationMs(kind: ModelErrorKind): number {
 
 /**
  * Switches between a two-entry candidate pool ([light, heavy]; see loadModelPool). The tier
- * comes from one Jev noul judgment per prompt ("does this need a strong reasoning model?");
- * image prompts and oversized contexts shortcut to heavy without the call. Between the
+ * comes from one Jev noul judgment per prompt ("does this need a strong reasoning model?"),
+ * with the context size riding along as state. Between the
  * thresholds the answer is a coin flip, so the session simply stays on its current model.
  * Every failure path — Jev down, no key, no pool match, failed switch — keeps the current
  * model and never blocks the turn.
@@ -89,10 +86,8 @@ export class AutoModelRouter {
     );
   }
 
-  /** Tier judgment: deterministic shortcuts first, else one Jev noul call with two thresholds. */
-  private async classify(prompt: string, contextChars: number, hasImages: boolean, signal?: AbortSignal): Promise<{ tier: ModelTier | null; reason: string }> {
-    if (hasImages) return { tier: "heavy", reason: "image input" };
-    if (contextChars > BIG_CONTEXT_CHARS) return { tier: "heavy", reason: "oversized context" };
+  /** Tier judgment: one Jev noul call with two thresholds. */
+  private async classify(prompt: string, contextChars: number, signal?: AbortSignal): Promise<{ tier: ModelTier | null; reason: string }> {
     try {
       const response = await this.jevClient.evaluate(
         {
@@ -128,7 +123,7 @@ export class AutoModelRouter {
     this.running = true;
     try {
       const contextChars = (ctx.getSystemPrompt?.() ?? "").length;
-      const need = await this.classify(prompt, contextChars, Boolean(options.hasImages), ctx.signal);
+      const need = await this.classify(prompt, contextChars, ctx.signal);
       if (!need.tier) return { ...fallback, reason: need.reason, skipped: "no-judgment" };
 
       const models = (ctx.scopedModels?.length ? ctx.scopedModels.map((x) => x.model) : ctx.modelRegistry.getAvailable())

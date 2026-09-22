@@ -94,17 +94,27 @@ test("Jev probability routes heavy and light tiers to the pool", async () => {
   assert.equal(light.model?.id, "glm-5.5-flash");
 });
 
-test("image prompts count as heavy without spending a Jev call", async () => {
+test("image turns judge by prompt; capability filters the light pick", async () => {
   let selected = 0;
   const flash = model("glm-5.5-flash");
   const vision = model("vision-model", { input: ["text", "image"] });
-  const { client: jev, calls } = stubJev(0.05); // would say light — the shortcut must win
+  const { client: jev, calls } = stubJev(0.05); // says light
   const router = new AutoModelRouter(stubPi(() => { selected++; }), true, ["glm-5.5-flash", "vision-model"], jev);
-  const result = await router.route("inspect this", stubCtx(flash, [flash, vision]), { hasImages: true });
-  assert.equal(result.tier, "heavy");
-  assert.equal(result.model?.id, "vision-model");
+  // Light entry cannot take images: no match, stay on the current model.
+  const kept = await router.route("inspect this", stubCtx(flash, [flash, vision]), { hasImages: true });
+  assert.equal(kept.changed, false);
+  assert.equal(kept.skipped, "no-model");
+  assert.equal(selected, 0);
+  assert.equal(calls(), 1);
+
+  // Multimodal light entry: the switch happens on the Jev verdict alone.
+  const lite = model("vision-lite", { input: ["text", "image"] });
+  const big = model("vision-heavy", { input: ["text", "image"] });
+  const mmRouter = new AutoModelRouter(stubPi(() => { selected++; }), true, ["vision-lite", "vision-heavy"], stubJev(0.05).client);
+  const down = await mmRouter.route("inspect this", stubCtx(big, [big, lite]), { hasImages: true });
+  assert.equal(down.tier, "light");
+  assert.equal(down.model?.id, "vision-lite");
   assert.equal(selected, 1);
-  assert.equal(calls(), 0);
 });
 
 test("every failure path keeps the current model", async () => {
