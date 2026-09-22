@@ -65,7 +65,8 @@ export function registerJevCommands(
   const guardMode = toolGuard ?? { enabled: false, setEnabled: () => {} };
   const gateMode = searchGate ?? { enabled: false, setEnabled: () => {} };
   pi.registerCommand("jev", {
-    description: "Manage TypeSafe Jev integration (status, enable, disable, auto, test, skills)",
+    description:
+      "Manage TypeSafe Jev (status, enable, auto, auto-model, compact, tool-guard, search-gate, skills, agents)",
     handler: async (args: string, ctx: ExtensionCommandContext) => {
       const tokens = args.trim().split(/\s+/).filter(Boolean);
       const sub = (tokens[0] ?? "").toLowerCase();
