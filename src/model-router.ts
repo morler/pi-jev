@@ -37,7 +37,7 @@ function blockDurationMs(kind: ModelErrorKind): number {
 /**
  * Switches between a two-entry candidate pool ([light, heavy]; see loadModelPool). The tier
  * comes from one Jev noul judgment per prompt ("does this need a strong reasoning model?"),
- * with the context size riding along as state. Between the
+ * with the context size and image flag riding along as state. Between the
  * thresholds the answer is a coin flip, so the session simply stays on its current model.
  * Every failure path — Jev down, no key, no pool match, failed switch — keeps the current
  * model and never blocks the turn.
@@ -87,16 +87,16 @@ export class AutoModelRouter {
   }
 
   /** Tier judgment: one Jev noul call with two thresholds. */
-  private async classify(prompt: string, contextChars: number, signal?: AbortSignal): Promise<{ tier: ModelTier | null; reason: string }> {
+  private async classify(prompt: string, contextChars: number, hasImages: boolean, signal?: AbortSignal): Promise<{ tier: ModelTier | null; reason: string }> {
     try {
       const response = await this.jevClient.evaluate(
         {
-          state: { prompt, context_chars: contextChars },
+          state: { prompt, context_chars: contextChars, has_images: hasImages },
           questions: {
             strong_model: {
               type: "noul",
               instructions:
-                "Probability this prompt needs a strong reasoning model instead of a fast cheap one. Strong-model work: planning, architecture, debugging, analysis, code review, refactoring, migrations, large-context synthesis, or non-trivial reasoning in any language. Fast-model work: greetings, listings, renames, formatting, trivial lookups and edits.",
+                "Probability this prompt needs a strong reasoning model instead of a fast cheap one. Strong-model work: planning, architecture, debugging, analysis, code review, refactoring, migrations, large-context synthesis, non-trivial image analysis, or non-trivial reasoning in any language. Image-bearing turns additionally require vision capability. Fast-model work: greetings, listings, renames, formatting, trivial lookups and edits.",
             },
           },
         },
@@ -123,7 +123,7 @@ export class AutoModelRouter {
     this.running = true;
     try {
       const contextChars = (ctx.getSystemPrompt?.() ?? "").length;
-      const need = await this.classify(prompt, contextChars, ctx.signal);
+      const need = await this.classify(prompt, contextChars, Boolean(options.hasImages), ctx.signal);
       if (!need.tier) return { ...fallback, reason: need.reason, skipped: "no-judgment" };
 
       const models = (ctx.scopedModels?.length ? ctx.scopedModels.map((x) => x.model) : ctx.modelRegistry.getAvailable())
