@@ -4,7 +4,7 @@ import { JevClient } from "../src/jev.js";
 import { ToolRouter } from "../src/router.js";
 import { SkillRouter } from "../src/skills.js";
 import { AutoJev } from "../src/auto.js";
-import { registerJevTools } from "../src/tools.js";
+import { registerJevTools, registerSearchGateTool } from "../src/tools.js";
 import { registerJevCommands, type PruneControl } from "../src/commands.js";
 import { AutoModelRouter } from "../src/model-router.js";
 import { JevCompactor, branchMessagesOf, pruneSchedule } from "../src/compact.js";
@@ -33,6 +33,12 @@ export default function (pi: ExtensionAPI) {
     description: "Validate tool calls with Jev System One to prevent hallucinations",
     type: "boolean",
     default: flagDefault("toolGuard"),
+  });
+
+  pi.registerFlag("jev-search-gate", {
+    description: "Offer jev_search_gate: Jev ranks web-search results, filters prompt injection, and judges sufficiency",
+    type: "boolean",
+    default: flagDefault("searchGate"),
   });
 
   pi.registerFlag("jev-compact", {
@@ -67,6 +73,15 @@ export default function (pi: ExtensionAPI) {
 
   const toolGuard = new ToolGuard(pi, jevClient, Boolean(pi.getFlag("jev-tool-guard")));
   toolGuard.install();
+
+  /** The gate itself always runs its fail-open path; the switch only gates tool availability. */
+  const searchGateControl = {
+    enabled: Boolean(pi.getFlag("jev-search-gate")),
+    setEnabled(value: boolean) {
+      this.enabled = value;
+    },
+  };
+  registerSearchGateTool(pi, jevClient, () => searchGateControl.enabled);
 
   const agentHandler = new JevAgentHandler(pi, jevClient);
   agentHandler.install();
@@ -205,7 +220,7 @@ export default function (pi: ExtensionAPI) {
   };
 
   registerJevTools(pi, jevClient, router, skillRouter);
-  registerJevCommands(pi, jevClient, skillRouter, auto, autoModel, compactor, agents, persistSwitch, pruneControl, toolGuard);
+  registerJevCommands(pi, jevClient, skillRouter, auto, autoModel, compactor, agents, persistSwitch, pruneControl, toolGuard, searchGateControl);
 
   pi.registerTool({
     name: "jev_compact_now",

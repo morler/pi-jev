@@ -44,7 +44,8 @@ export function registerJevCommands(
   agents?: AgentOrchestrator,
   persistSwitch?: (key: JevConfigKey, value: boolean) => boolean,
   prune?: PruneControl,
-  toolGuard?: ToolGuard
+  toolGuard?: ToolGuard,
+  searchGate?: { enabled: boolean; setEnabled(enabled: boolean): void }
 ): void {
   const agentMode = agents ?? { enabled: false, setEnabled: () => {}, dispatch: async () => ({ accepted: false, error: "disabled" }) };
   const compactMode = compactor ?? { enabled: false, setEnabled: () => {} };
@@ -62,6 +63,7 @@ export function registerJevCommands(
   };
 
   const guardMode = toolGuard ?? { enabled: false, setEnabled: () => {} };
+  const gateMode = searchGate ?? { enabled: false, setEnabled: () => {} };
   pi.registerCommand("jev", {
     description: "Manage TypeSafe Jev integration (status, enable, disable, auto, test, skills)",
     handler: async (args: string, ctx: ExtensionCommandContext) => {
@@ -69,7 +71,7 @@ export function registerJevCommands(
       const sub = (tokens[0] ?? "").toLowerCase();
       const rest = tokens.slice(1).join(" ");
       const usage =
-        "Available options: /jev status, /jev skills [query], /jev test [prompt], /jev enable, /jev disable, /jev auto [on|off], /jev auto-model [on|off], /jev compact [on|off|status|reset|now], /jev auto-agents [on|off], /jev tool-guard [on|off], /jev agents [task]";
+        "Available options: /jev status, /jev skills [query], /jev test [prompt], /jev enable, /jev disable, /jev auto [on|off], /jev auto-model [on|off], /jev compact [on|off|status|reset|now], /jev auto-agents [on|off], /jev tool-guard [on|off], /jev search-gate [on|off], /jev agents [task]";
 
       if (sub === "status" || sub === "") {
         const origin = jevClient.getKeyOrigin();
@@ -90,6 +92,7 @@ export function registerJevCommands(
             `• Auto mode: ${auto.enabled ? "on" : "off"}${auto.enabled && !origin ? " (inactive: Jev unconfigured)" : ""}\n` +
             `• Auto-model: ${modelMode.enabled ? "on" : "off"}\n` +
             `• Tool guard: ${guardMode.enabled ? "on" : "off"}\n` +
+            `• Search gate: ${gateMode.enabled ? "on" : "off"}\n` +
             `• Jev compaction: ${compactMode.enabled ? "on" : "off"}\n` +
             (prune ? `• ${prune.counts()}\n` : "") +
             `• Agent orchestration: ${agentMode.enabled ? "on" : "off"}\n` +
@@ -225,6 +228,18 @@ export function registerJevCommands(
         const enabled = arg === "on" ? true : arg === "off" ? false : !guardMode.enabled;
         guardMode.setEnabled(enabled);
         ctx.ui.notify(`Jev tool guard ${enabled ? "enabled" : "disabled"}.${saveNotice("toolGuard", enabled)}`, "info");
+        return;
+      }
+
+      if (sub === "search-gate" || sub === "searchgate" || sub === "gate") {
+        const arg = rest.toLowerCase();
+        if (arg !== "" && arg !== "on" && arg !== "off") {
+          ctx.ui.notify(`Unknown /jev search-gate argument "${rest}". ${usage}`, "warning");
+          return;
+        }
+        const enabled = arg === "on" ? true : arg === "off" ? false : !gateMode.enabled;
+        gateMode.setEnabled(enabled);
+        ctx.ui.notify(`Jev search gate ${enabled ? "enabled" : "disabled"}.${saveNotice("searchGate", enabled)}`, "info");
         return;
       }
 

@@ -12,6 +12,7 @@ Semantic tool routing and typed decisions for the [Pi coding agent](https://pi.d
 - **Automatic Mode (opt-in)**: `--jev-auto` / `PI_JEV_AUTO=1` / `/jev auto on` routes tools and suggests skills before every prompt. Off by default.
 - **Automatic Model Mode (opt-in)**: `--jev-auto-model` / `PI_JEV_AUTO_MODEL=1` / `/jev auto-model on` asks Jev to classify each prompt (one System One request; image prompts and oversized contexts skip the call and count as heavy) and picks between two candidate models — light for simple tasks, heavy for demanding ones (pool defaults to `glm-5.5-flash` + `deepseek-v4-flash`; override with `autoModelPool` in `pi-jev.json`). Off by default.
 - **Tool Call Guard (opt-in)**: `--jev-tool-guard` / `PI_JEV_TOOL_GUARD=1` / `/jev tool-guard on` intercepts tool calls with Jev to detect hallucinations and enhance failed results. Off by default.
+- **Search Gate (opt-in)**: `--jev-search-gate` / `PI_JEV_SEARCH_GATE=1` / `/jev search-gate on` offers the `jev_search_gate` tool: Jev ranks web-search results, drops prompt-injection results, judges whether the evidence suffices, and picks the next query from your own candidates. Fails open with the screened head and `decision: unknown`. Off by default.
 - **Jev Compaction (on by default)**: after install, `/compact` runs Jev compaction — important tool history is retained selectively while user intent is preserved — with Pi's built-in summary as fail-open fallback. `/jev compact off` or `PI_JEV_COMPACT=0` restores Pi's built-in compaction.
 - **Agent Orchestration & Typed Agent**: `/jev agents <task>` dispatches `pi-subagents` orchestration; register `agent: "jev"` in workflows for instant sub-second typed judgments without LLM overhead.
 - **Post-Run Gate Check (`jev-gate` CLI)**: Fast binary for subagent `gate` parameters (`npx pi-jev-gate -c "criteria"`). Checks git diff / output and exits 0 on pass or 1 on fail.
@@ -207,6 +208,7 @@ Auto-model uses task signals, attached images, and context size to choose the be
 - `/jev auto [on|off]` — Turns automatic per-prompt tool/skill routing on or off (no argument flips it).
 - `/jev auto-model [on|off]` — Turns automatic model selection on or off (no argument flips it).
 - `/jev tool-guard [on|off]` — Turns tool call anti-hallucination validation and error guidance on or off.
+- `/jev search-gate [on|off]` — Turns the `jev_search_gate` search-ranking tool on or off.
 - `/jev compact [on|off]` — Turns Jev-guided compaction on or off (on by default; `/compact` runs it).
 - `/jev compact status` — Shows in-place pruning state: pressure episode, agent-run flag, no-cache streak, pending changes, and the cache/judge timings.
 - `/jev compact reset` — Clears the frozen scores, the applied decisions, the breaker, and the pressure state.
@@ -239,6 +241,9 @@ Used by the agent to find relevant specialized workflows and instructions for co
 
 ### 4. `jev_evaluate`
 Used for structured decisions, classifications, triage, and scoring.
+
+### 5. `jev_search_gate`
+One round of search decisions after a web or API search: Jev ranks which results are worth reading, drops results carrying injected instructions, judges whether the evidence already answers the question, and picks the next query from your own candidates. Fails open: when Jev is unavailable you get the screened head of the list and `decision: "unknown"`.
 
 ```json
 {
