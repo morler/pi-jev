@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { JevClient } from "./jev.js";
+import type { QuestionConfig } from "./types.js";
 
 /** Single activation cutoff for Jev probabilities. Raise to reduce noise, lower for recall. */
 export const JEV_THRESHOLD = 0.65;
@@ -124,7 +125,7 @@ export class SkillRouter {
 
     if (this.jevClient.isConfigured()) {
       try {
-        const questions: Record<string, any> = {};
+        const questions: Record<string, QuestionConfig> = {};
         for (const s of candidates) {
           questions[s.name] = {
             type: "noul",

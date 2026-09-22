@@ -224,7 +224,7 @@ export function registerJevCommands(
         }
         const enabled = arg === "on" ? true : arg === "off" ? false : !guardMode.enabled;
         guardMode.setEnabled(enabled);
-        ctx.ui.notify(`Jev tool guard ${enabled ? "enabled" : "disabled"}.`, "info");
+        ctx.ui.notify(`Jev tool guard ${enabled ? "enabled" : "disabled"}.${saveNotice("toolGuard", enabled)}`, "info");
         return;
       }
 

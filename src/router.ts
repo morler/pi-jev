@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { JevClient } from "./jev.js";
 import { JEV_TOOL_NAMES, isJevTool } from "./types.js";
+import type { QuestionConfig } from "./types.js";
 import { JEV_THRESHOLD } from "./skills.js";
 
 export interface ToolMetadata {
@@ -89,7 +90,7 @@ export class ToolRouter {
 
     if (this.jevClient.isConfigured()) {
       try {
-        const questions: Record<string, any> = {};
+        const questions: Record<string, QuestionConfig> = {};
         for (const c of candidates) {
           questions[c.name] = {
             type: "noul",
