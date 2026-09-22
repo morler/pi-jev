@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { JevClient } from "./jev.js";
-import { JEV_TOOL_NAMES, isJevTool } from "./types.js";
+import { isJevTool } from "./types.js";
 import type { QuestionConfig } from "./types.js";
 import { JEV_THRESHOLD } from "./skills.js";
 
@@ -23,7 +23,6 @@ export interface RouterResult {
 export class ToolRouter {
   private pi: ExtensionAPI;
   private jevClient: JevClient;
-  private managedTools = new Set<string>();
 
   constructor(pi: ExtensionAPI, jevClient: JevClient) {
     this.pi = pi;
