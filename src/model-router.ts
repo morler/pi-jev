@@ -32,6 +32,11 @@ export function classifyModelError(error: unknown): ModelErrorKind {
   return "unknown";
 }
 
+/** Backoff before a failed pool model may be retried: billing/limit errors cool down 10 min, transient ones 1 min. */
+function blockDurationMs(kind: ModelErrorKind): number {
+  return kind === "quota" || kind === "rate-limit" ? 600_000 : 60_000;
+}
+
 /**
  * Switches between a two-entry candidate pool ([light, heavy]; see loadModelPool). The tier
  * comes from one Jev noul judgment per prompt ("does this need a strong reasoning model?");
@@ -60,7 +65,7 @@ export class AutoModelRouter {
     if (!model || status < 400) return undefined;
     const kind: ModelErrorKind = status === 408 || status === 504 ? "timeout" : status === 401 || status === 403 ? "auth" : status === 413 ? "context-limit" : status === 429 ? "rate-limit" : status === 402 ? "quota" : status >= 500 ? "unavailable" : "unknown";
     if (["quota", "rate-limit", "context-limit", "unavailable", "timeout"].includes(kind)) {
-      this.blocked.set(`${model.provider}/${model.id}`, Date.now() + (kind === "quota" || kind === "rate-limit" ? 600_000 : 60_000));
+      this.blocked.set(`${model.provider}/${model.id}`, Date.now() + blockDurationMs(kind));
     }
     return kind;
   }
@@ -137,7 +142,7 @@ export class AutoModelRouter {
         return { changed: true, tier: need.tier, model: target, reason: need.reason };
       } catch (error) {
         const kind = classifyModelError(error);
-        this.blocked.set(`${target.provider}/${target.id}`, Date.now() + (kind === "rate-limit" || kind === "quota" ? 600_000 : 60_000));
+        this.blocked.set(`${target.provider}/${target.id}`, Date.now() + blockDurationMs(kind));
         return { changed: false, tier: need.tier, model: current, reason: `model switch failed: ${kind}`, skipped: "error" };
       }
     } catch (error) {
