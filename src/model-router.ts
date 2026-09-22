@@ -1,6 +1,7 @@
 import type { ExtensionContext, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { JevClient } from "./jev.js";
+import type { PoolEntry } from "./config.js";
 
 export type ModelTier = "light" | "heavy";
 export type ModelErrorKind = "quota" | "rate-limit" | "context-limit" | "unavailable" | "timeout" | "auth" | "unknown";
@@ -36,7 +37,7 @@ function blockDurationMs(kind: ModelErrorKind): number {
 
 /**
  * Switches between a two-entry candidate pool ([light, heavy]; see loadModelPool). The tier
- * comes from one Jev noul judgment per prompt ("does this need a strong reasoning model?"),
+ * comes from one Jev noul judgment per prompt ("can the configured light model handle this?"),
  * with the context size and image flag riding along as state. Between the
  * thresholds the answer is a coin flip, so the session simply stays on its current model.
  * Every failure path — Jev down, no key, no pool match, failed switch — keeps the current
@@ -50,7 +51,7 @@ export class AutoModelRouter {
   constructor(
     private pi: ExtensionAPI,
     enabled: boolean,
-    private pool: string[],
+    private pool: PoolEntry[],
     private jevClient: JevClient
   ) {
     this.enabled = enabled;
@@ -69,7 +70,12 @@ export class AutoModelRouter {
 
   /** The pool entry for a tier: index 0 is light, index 1 heavy (extra entries are ignored). */
   private poolEntry(tier: ModelTier): string | undefined {
-    return this.pool[tier === "heavy" ? 1 : 0];
+    return this.pool[tier === "heavy" ? 1 : 0]?.model;
+  }
+
+  /** Capability note for the pool entry of a tier; undefined when not configured. */
+  private poolNote(tier: ModelTier): string | undefined {
+    return this.pool[tier === "heavy" ? 1 : 0]?.note;
   }
 
   /** First model matching a pool entry: provider-pinned entries match provider+id exactly (a HuggingFace mirror or a "-plus" variant can never win); bare entries stay a substring so version suffixes still hit. */
@@ -86,17 +92,17 @@ export class AutoModelRouter {
     );
   }
 
-  /** Tier judgment: one Jev noul call with two thresholds. */
-  private async classify(prompt: string, contextChars: number, hasImages: boolean, signal?: AbortSignal): Promise<{ tier: ModelTier | null; reason: string }> {
+  /** Tier judgment: one Jev noul call with two thresholds; the question is asked relative to the configured light model. */
+  private async classify(prompt: string, contextChars: number, hasImages: boolean, lightModel: { id: string; note?: string }, signal?: AbortSignal): Promise<{ tier: ModelTier | null; reason: string }> {
     try {
       const response = await this.jevClient.evaluate(
         {
-          state: { prompt, context_chars: contextChars, has_images: hasImages },
+          state: { prompt, context_chars: contextChars, has_images: hasImages, light_model: lightModel },
           questions: {
             strong_model: {
               type: "noul",
               instructions:
-                "Probability this prompt needs a strong reasoning model instead of a fast cheap one. Strong-model work: planning, architecture, debugging, analysis, code review, refactoring, migrations, large-context synthesis, non-trivial image analysis, or non-trivial reasoning in any language. Image-bearing turns additionally require vision capability. Fast-model work: greetings, listings, renames, formatting, trivial lookups and edits.",
+                `P = probability the fast model "${lightModel.id}"${lightModel.note ? ` (note: ${lightModel.note})` : ""} CANNOT acceptably complete this turn. Fast-model work: greetings, listings, renames, formatting, lookups, edits, single-step search, and multi-step tool loops (search+summarize, fetch+process+write) regardless of step count. Heavy work: deep architecture or design reasoning, subtle multi-file debugging, large-context synthesis (>20k chars), complex vision analysis. Image-bearing turns additionally require vision capability.`,
             },
           },
         },
@@ -123,7 +129,7 @@ export class AutoModelRouter {
     this.running = true;
     try {
       const contextChars = (ctx.getSystemPrompt?.() ?? "").length;
-      const need = await this.classify(prompt, contextChars, Boolean(options.hasImages), ctx.signal);
+      const need = await this.classify(prompt, contextChars, Boolean(options.hasImages), { id: this.poolEntry("light") ?? "?", note: this.poolNote("light") }, ctx.signal);
       if (!need.tier) return { ...fallback, reason: need.reason, skipped: "no-judgment" };
 
       const models = (ctx.scopedModels?.length ? ctx.scopedModels.map((x) => x.model) : ctx.modelRegistry.getAvailable())

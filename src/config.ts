@@ -104,17 +104,34 @@ export function envOverrides(): string[] {
   );
 }
 
+/** Pool entry: a model id plus an optional one-line capability note passed to the routing judge. */
+export interface PoolEntry { model: string; note?: string }
+
+const DEFAULT_POOL_ENTRIES: PoolEntry[] = [
+  { model: "glm-5.5-flash", note: "fine with multi-step tool loops and web search; weak on long-context synthesis" },
+  { model: "deepseek-v4-flash", note: "deep reasoning, large-context synthesis, complex vision" },
+];
+
 /** Default auto-model candidate pool: [light, heavy]. */
-export const DEFAULT_MODEL_POOL = ["glm-5.5-flash", "deepseek-v4-flash"];
+export const DEFAULT_MODEL_POOL = DEFAULT_POOL_ENTRIES;
 
 /**
  * The auto-model candidate pool, saved as an ordered "autoModelPool" array in pi-jev.json:
- * index 0 answers light tasks, index 1 heavy ones. A missing, empty, or malformed entry
- * falls back to the built-in default.
+ * index 0 answers light tasks, index 1 heavy ones. Entries may be a bare model id string
+ * (legacy) or `{model, note?}`. A missing, empty, or malformed entry falls back to the
+ * built-in default.
  */
-export function loadModelPool(): string[] {
+export function loadModelPool(): PoolEntry[] {
   const raw = readJsonObject(configPath())["autoModelPool"];
   if (!Array.isArray(raw)) return DEFAULT_MODEL_POOL;
-  const pool = raw.filter((x): x is string => typeof x === "string" && x.trim() !== "").map((x) => x.trim());
+  const pool: PoolEntry[] = [];
+  for (const x of raw) {
+    if (typeof x === "string" && x.trim() !== "") pool.push({ model: x.trim() });
+    else if (x && typeof x === "object" && typeof (x as Record<string, unknown>).model === "string" && (x as Record<string, unknown>).model !== "") {
+      const model = ((x as Record<string, unknown>).model as string).trim();
+      const noteRaw = (x as Record<string, unknown>).note;
+      pool.push(typeof noteRaw === "string" ? { model, note: noteRaw } : { model });
+    }
+  }
   return pool.length > 0 ? pool : DEFAULT_MODEL_POOL;
 }

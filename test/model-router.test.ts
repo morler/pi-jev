@@ -8,7 +8,10 @@ import type { JevEvaluationResponse } from "../src/types.js";
 
 type TestModel = Model<"openai-completions">;
 
-const POOL = ["glm-5.5-flash", "deepseek-v4-flash"];
+const POOL = [
+  { model: "glm-5.5-flash", note: "fine with multi-step tool loops and web search" },
+  { model: "deepseek-v4-flash", note: "deep reasoning and large-context synthesis" },
+];
 
 const model = (id: string, extra: Partial<TestModel> = {}): TestModel =>
   ({
@@ -39,6 +42,19 @@ const stubJev = (answer: number | "fail" | "unconfigured"): { client: JevClient;
     },
   } as unknown as JevClient;
   return { client, calls: () => count };
+};
+
+/** Like stubJev but captures every evaluate() request so tests can introspect state/questions. */
+const stubRecordingJev = (answer: number): { client: JevClient; last: () => { state: Record<string, unknown>; questions: Record<string, unknown> } } => {
+  let captured: { state: Record<string, unknown>; questions: Record<string, unknown> } | undefined;
+  const client = {
+    isConfigured: () => true,
+    evaluate: async (req: { state: Record<string, unknown>; questions: Record<string, unknown> }): Promise<JevEvaluationResponse> => {
+      captured = req;
+      return { answers: { strong_model: { value: answer } } } as unknown as JevEvaluationResponse;
+    },
+  } as unknown as JevClient;
+  return { client, last: () => captured as { state: Record<string, unknown>; questions: Record<string, unknown> } };
 };
 
 test("classifies provider limit errors", () => {
@@ -99,7 +115,7 @@ test("image turns judge by prompt; capability filters the light pick", async () 
   const flash = model("glm-5.5-flash");
   const vision = model("vision-model", { input: ["text", "image"] });
   const { client: jev, calls } = stubJev(0.05); // says light
-  const router = new AutoModelRouter(stubPi(() => { selected++; }), true, ["glm-5.5-flash", "vision-model"], jev);
+  const router = new AutoModelRouter(stubPi(() => { selected++; }), true, [{ model: "glm-5.5-flash" }, { model: "vision-model" }], jev);
   // Light entry cannot take images: no match, stay on the current model.
   const kept = await router.route("inspect this", stubCtx(flash, [flash, vision]), { hasImages: true });
   assert.equal(kept.changed, false);
@@ -110,7 +126,7 @@ test("image turns judge by prompt; capability filters the light pick", async () 
   // Multimodal light entry: the switch happens on the Jev verdict alone.
   const lite = model("vision-lite", { input: ["text", "image"] });
   const big = model("vision-heavy", { input: ["text", "image"] });
-  const mmRouter = new AutoModelRouter(stubPi(() => { selected++; }), true, ["vision-lite", "vision-heavy"], stubJev(0.05).client);
+  const mmRouter = new AutoModelRouter(stubPi(() => { selected++; }), true, [{ model: "vision-lite" }, { model: "vision-heavy" }], stubJev(0.05).client);
   const down = await mmRouter.route("inspect this", stubCtx(big, [big, lite]), { hasImages: true });
   assert.equal(down.tier, "light");
   assert.equal(down.model?.id, "vision-lite");
@@ -130,7 +146,7 @@ test("every failure path keeps the current model", async () => {
   const off = await unconfigured.route("plan a safe migration", stubCtx(flash, [flash, strong]));
   assert.equal(off.skipped, "unconfigured");
 
-  const absent = new AutoModelRouter(stubPi(() => { throw new Error("must not switch"); }), true, ["glm-5.5-flash", "missing-heavy"], stubJev(0.9).client);
+  const absent = new AutoModelRouter(stubPi(() => { throw new Error("must not switch"); }), true, [{ model: "glm-5.5-flash" }, { model: "missing-heavy" }], stubJev(0.9).client);
   const noModel = await absent.route("plan a safe migration", stubCtx(flash, [flash]));
   assert.equal(noModel.changed, false);
   assert.equal(noModel.skipped, "no-model");
@@ -139,7 +155,7 @@ test("every failure path keeps the current model", async () => {
 test("provider-prefixed entries never match another provider's same-named id", async () => {
   const cn = model("MiniMax-M3", { provider: "minimax-cn" });
   const hf = model("MiniMaxAI/MiniMax-M3", { provider: "huggingface" });
-  const router = new AutoModelRouter(stubPi(() => { throw new Error("must not switch"); }), true, ["minimax-cn/MiniMax-M3", "zai-coding-cn/glm-5.3-flash"], stubJev(0.05).client);
+  const router = new AutoModelRouter(stubPi(() => { throw new Error("must not switch"); }), true, [{ model: "minimax-cn/MiniMax-M3" }, { model: "zai-coding-cn/glm-5.3-flash" }], stubJev(0.05).client);
   const result = await router.route("hi, list files", stubCtx(cn, [cn, hf]));
   assert.equal(result.model?.provider, "minimax-cn");
   assert.equal(result.changed, false); // already current; the HF lookalike must not be picked
@@ -149,8 +165,30 @@ test("provider-pinned entries match exactly, never a same-provider variant", asy
   const exact = model("glm-5.3-flash", { provider: "zai-coding-cn" });
   const plus = model("glm-5.3-flash-plus", { provider: "zai-coding-cn" });
   let selected = 0;
-  const router = new AutoModelRouter(stubPi(() => { selected++; }), true, ["minimax-cn/MiniMax-M3", "zai-coding-cn/glm-5.3-flash"], stubJev(0.9).client);
+  const router = new AutoModelRouter(stubPi(() => { selected++; }), true, [{ model: "minimax-cn/MiniMax-M3" }, { model: "zai-coding-cn/glm-5.3-flash" }], stubJev(0.9).client);
   const result = await router.route("plan a refactor review", stubCtx(plus, [plus, exact]));
   assert.equal(result.model?.id, "glm-5.3-flash");
   assert.equal(selected, 1);
+});
+
+test("classify sends light model identity into state and instructions", async () => {
+  const flash = model("glm-5.5-flash");
+  const strong = model("deepseek-v4-flash");
+  const pool = [
+    { model: "glm-5.5-flash", note: "fine with multi-step tool loops and web search" },
+    { model: "deepseek-v4-flash" },
+  ];
+  const jev = stubRecordingJev(0.7);
+  const router = new AutoModelRouter(stubPi(() => {}), true, pool, jev.client);
+  await router.route("compare two vendor docs and summarize", stubCtx(flash, [flash, strong]));
+  const req = jev.last();
+  // light model identity is in state so the judge thinks about relative capability
+  const lm = req.state.light_model as { id: string; note?: string };
+  assert.equal(lm.id, "glm-5.5-flash");
+  assert.equal(lm.note, "fine with multi-step tool loops and web search");
+  // instructions reframe the question against the light model
+  const instr = String((req.questions.strong_model as { instructions?: unknown } | undefined)?.instructions ?? "");
+  assert.ok(instr.includes('"glm-5.5-flash"'));
+  assert.ok(instr.includes("fine with multi-step tool loops and web search"));
+  assert.ok(instr.toLowerCase().includes("cannot"));
 });
