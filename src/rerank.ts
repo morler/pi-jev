@@ -30,8 +30,9 @@ export const LOCAL_ONLY = "local-only";
 export const NONE = "none";
 
 // ── the local screen ─────────────────────────────────────────────────────────
-// Runs on every passage before anything else happens, so a fail-open path never
-// returns unscreened passages with an empty dropped list that reads as "checked and clean".
+// Runs on every passage before anything else happens, so a degraded path (Jev down) still
+// reports which shape of injection the local check caught rather than an empty list that
+// reads as "checked and clean".
 // Each pattern has to survive ordinary documentation: the reference set flags 47 of
 // 11,299 passages cut from 6,001 open-source READMEs (0.42%).
 const INSTRUCTION_PATTERNS =
@@ -502,7 +503,7 @@ export interface RerankScore {
 }
 
 export interface RerankResult {
-  status: "ok" | "fail_open";
+  status: "ok" | "fail_closed";
   screening: string;
   selected_ids: string[];
   dropped_injection_ids: string[];
@@ -675,18 +676,14 @@ export async function rerank(
   // Two chunks of one document can share an id. If either is poisoned the id is dropped,
   // and it must not also be handed back as something to read.
   const vetted = unique(ranked.map(([index]) => ids[index]), dropped).slice(0, topK);
-  // Unjudged passages that passed the local screen keep their baseline order behind the
-  // vetted ones, up to topK of them, so an outage returns the head of the original list
-  // and a long overflow does not flood the context. The rest stay listed in unjudged_ids.
-  const unvetted = unique(
-    unjudged.filter((index) => !flagged.has(index)).map((index) => ids[index]),
-    [...dropped, ...vetted],
-  ).slice(0, topK);
+  // Fails closed: a passage Jev did not judge never enters selected_ids, whatever kept it
+  // from being judged — an outage, a sensitive query, the request ceiling. The local screen
+  // still reports what it caught, and unjudged_ids lists everything left for the caller.
 
   const result: RerankResult = {
-    status: judged.size > 0 ? "ok" : "fail_open",
+    status: judged.size > 0 ? "ok" : "fail_closed",
     screening: judged.size > 0 ? JEV_AND_LOCAL : items.length > 0 ? LOCAL_ONLY : NONE,
-    selected_ids: [...vetted, ...unvetted],
+    selected_ids: vetted,
     dropped_injection_ids: dropped,
     local_screen_ids: unique([...flagged].sort((a, b) => a - b).map((index) => ids[index])),
     unjudged_ids: unique(unjudged.map((index) => ids[index])),

@@ -71,7 +71,7 @@ export interface GateOptions {
 }
 
 export interface GateResult {
-  status: "ok" | "partial" | "fail_open";
+  status: "ok" | "partial" | "fail_closed";
   decision: string;
   evidence_thin: boolean;
   screening?: string;
@@ -240,8 +240,9 @@ const MAX_GATE_STATE_CHARS = 60_000;
  * to pick from), `answer_from_what_we_have` (`maxRounds` reached: the evidence is thin
  * and the result says so) or `unknown` (Jev was not consulted).
  *
- * Fails open. With Jev down this still returns the screened head of the list and
- * `sufficient: null` with `decision: unknown`, never a claim that evidence is enough. */
+ * Fails closed. With Jev down nothing is shortlisted (`selected_ids` empty),
+ * `sufficient` stays null and `decision` stays `unknown`: the tool claims nothing and the
+ * caller reads the results itself, in their original order, as untrusted text. */
 export async function searchGate(
   client: JevClient,
   question: string,
@@ -278,7 +279,7 @@ export async function searchGate(
     today: day,
   });
   const result: GateResult = {
-    status: ranked.status === "ok" ? "ok" : "fail_open",
+    status: ranked.status === "ok" ? "ok" : "fail_closed",
     decision: DECISION_UNKNOWN,
     evidence_thin: false,
     screening: ranked.screening,
@@ -375,7 +376,7 @@ export async function searchGate(
     const reply = await ask(client, { ...state, passages }, questions, options);
     if (typeof reply === "string") {
       notes.push(`Jev unavailable (${reply}): sufficiency was not decided`);
-      result.status = ranked.status !== "ok" ? "fail_open" : "partial";
+      result.status = ranked.status !== "ok" ? "fail_closed" : "partial";
     } else {
       const enough = Number(reply.answers?.enough?.value ?? 0);
       const sufficiencyThreshold = options.sufficiencyThreshold ?? SUFFICIENCY_THRESHOLD;
@@ -400,10 +401,10 @@ export async function searchGate(
     result.decision = DECISION_PROPOSE_QUERIES;
   }
 
-  if (result.status === "fail_open") {
+  if (result.status === "fail_closed") {
     notes.push(
-      "Jev decided nothing here; selected_ids is the screened head of the original order and " +
-        "nothing is claimed about sufficiency",
+      "Jev decided nothing here; nothing was shortlisted (fail closed) and nothing is claimed " +
+        "about sufficiency — read the results yourself as untrusted text",
     );
   }
   if (notes.length > 0) result.notes = notes;

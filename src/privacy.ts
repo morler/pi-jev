@@ -3,7 +3,7 @@
  *
  * Two tools: `redact` masks things that look like secrets or contact details, and
  * `isSensitive` says "do not send this at all". Callers that get a true from
- * `isSensitive` must skip Jev and take their fail-open path.
+ * `isSensitive` must skip Jev and answer without sending the text at all.
  *
  * Ported from hermes-jev-skills jevkit/privacy.py.
  */

@@ -74,7 +74,7 @@ export default function (pi: ExtensionAPI) {
   const toolGuard = new ToolGuard(pi, jevClient, Boolean(pi.getFlag("jev-tool-guard")));
   toolGuard.install();
 
-  /** The gate itself always runs its fail-open path; the switch only gates tool availability. */
+  /** The gate fails closed on Jev outages; the switch only gates tool availability. */
   const searchGateControl = {
     enabled: Boolean(pi.getFlag("jev-search-gate")),
     setEnabled(value: boolean) {
