@@ -73,12 +73,12 @@ test("tier thresholds sit exactly on HEAVY_P and LIGHT_P", async () => {
   const atHeavy = new AutoModelRouter(pi, true, POOL, stubJev(0.6).client);
   assert.equal((await atHeavy.route("plan a migration", ctx)).tier, "heavy");
 
-  const atLight = new AutoModelRouter(pi, true, POOL, stubJev(0.3).client);
+  const atLight = new AutoModelRouter(pi, true, POOL, stubJev(0.4).client);
   const light = await atLight.route("hi, list files", stubCtx(strong, [flash, strong]));
   assert.equal(light.tier, "light");
   assert.equal(selected, 2);
 
-  const justAboveLight = new AutoModelRouter(pi, true, POOL, stubJev(0.31).client);
+  const justAboveLight = new AutoModelRouter(pi, true, POOL, stubJev(0.41).client);
   const kept = await justAboveLight.route("hi, list files", ctx);
   assert.equal(kept.changed, false);
   assert.equal(kept.skipped, "no-judgment");
@@ -98,7 +98,7 @@ test("Jev probability routes heavy and light tiers to the pool", async () => {
   assert.equal(selected, 1);
 
   // Ambiguous probability (coin flip): keep the current model.
-  const unsure = new AutoModelRouter(stubPi(() => { selected++; }), true, POOL, stubJev(0.4).client);
+  const unsure = new AutoModelRouter(stubPi(() => { selected++; }), true, POOL, stubJev(0.5).client);
   const kept = await unsure.route("plan a safe migration", ctx);
   assert.equal(kept.changed, false);
   assert.equal(kept.skipped, "no-judgment");

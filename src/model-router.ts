@@ -17,7 +17,7 @@ export interface ModelRouteResult {
 /** Noul probability at or above this means the prompt wants the strong pool model. */
 const HEAVY_P = 0.6;
 /** Noul probability at or below this means the fast pool model is plenty. */
-const LIGHT_P = 0.3;
+const LIGHT_P = 0.4;
 export function classifyModelError(error: unknown): ModelErrorKind {
   // SAFETY: providers throw both Error instances and plain objects carrying .message; read it off either shape.
   const text = String((error as unknown as { message?: string })?.message ?? error).toLowerCase();
