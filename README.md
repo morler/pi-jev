@@ -1,4 +1,4 @@
-# pi-jev
+# pi-jev-tools
 
 Semantic tool routing and typed decisions for the [Pi coding agent](https://pi.dev) powered by [TypeSafe](https://typesafe.ai) Jev (System One).
 
@@ -22,7 +22,7 @@ Semantic tool routing and typed decisions for the [Pi coding agent](https://pi.d
 ## Installation
 
 ```bash
-pi install npm:pi-jev
+pi install npm:pi-jev-tools
 ```
 
 Or install directly from GitHub:
