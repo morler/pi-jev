@@ -21,14 +21,34 @@ Semantic tool routing and typed decisions for the [Pi coding agent](https://pi.d
 
 ## Installation
 
+### Requirement: pi-jev-core
+
+pi-jev-tools judges nothing by itself: every Jev call — the `JevClient`, platform routing, credential resolution, and answer normalization — comes from the [pi-jev-core](https://github.com/morler/pi-jev-core) package (public on GitHub), wired as a `"pi-jev-core": "file:../pi-jev-core"` dependency. **pi-jev-core is not on npm yet**, so the npm and GitHub one-liners below only work once it is published. For now, clone both repos side by side:
+
 ```bash
-pi install npm:pi-jev-tools
+# from the directory that will hold both repos (they must be siblings)
+git clone https://github.com/morler/pi-jev-core.git
+git clone https://github.com/morler/pi-jev.git pi-jev-tools
+cd pi-jev-tools && npm install
+cd ..
+pi install ./pi-jev-tools
 ```
 
-Or install directly from GitHub:
+The sibling layout is required: `pi-jev-tools` resolves its Jev core through `../pi-jev-core`, so moving or renaming one repo without the other breaks every Jev feature at load time.
+
+Once pi-jev-core is published to npm, these work on their own:
 
 ```bash
+pi install npm:pi-jev-tools
 pi install git:github.com/TheoOliveira/pi-jev
+```
+
+pi-jev-core is itself a standalone Pi extension (it registers the `jev_evaluate` tool); installing pi-jev-tools brings it along through the dependency, so you never install both by hand.
+
+Verify the wiring after install:
+
+```text
+/jev status
 ```
 
 ## Setup
@@ -41,6 +61,7 @@ Pick the Jev API platform with `JEV_PLATFORM` (default `typesafe`) and set that 
 | `openrouter`          | `OPENROUTER_API_KEY`                                                    | `typesafe/jev-1.13`|
 | `cloudflare`          | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_GATEWAY_ID` | `typesafe/jev`     |
 | `vercel`              | `AI_GATEWAY_API_KEY`                                                    | `typesafe-ai/jev`  |
+| `jevk5` (local)       | none — optional `JEVK5_BASE_URL`                                        | `jevk5-4b-v0.2`    |
 
 ```bash
 export TYPESAFE_API_KEY=ts_...          # default platform
@@ -59,7 +80,7 @@ echo "cf-token"  > ~/.pi/agent/secrets/cloudflare_api_token
 echo "gw-key"    > ~/.pi/agent/secrets/ai_gateway_api_key
 ```
 
-`JEV_PLATFORM` is read when Pi starts. Cloudflare also requires `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_GATEWAY_ID`; TypeSafe additionally honors `TYPESAFE_DEFAULT_MODEL`.
+`JEV_PLATFORM` is read when Pi starts. Cloudflare also requires `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_GATEWAY_ID`; TypeSafe additionally honors `TYPESAFE_DEFAULT_MODEL`. `jevk5` routes evaluations to a local llama-server serving a JevK5 GGUF — no credential and no egress; set `JEVK5_BASE_URL` (default `http://127.0.0.1:8008`) if your server listens elsewhere.
 
 Then check status inside Pi:
 
