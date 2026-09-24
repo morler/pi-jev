@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { callJev, resolveCredential, resolvePlatform } from "../src/platform.js";
+import { callJev, resolveCredential, resolvePlatform } from "pi-jev-core";
 import { JevClient } from "../src/jev.js";
 import type { QuestionConfig } from "../src/types.js";
 

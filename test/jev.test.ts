@@ -29,7 +29,7 @@ test("noulProbability reads the provider's own answer and nothing else", () => {
   }
 });
 
-test("an answer the provider omitted reports 0, but stays distinguishable through raw", async () => {
+test("an answer the provider omitted stays undefined, but stays distinguishable through raw", async () => {
   const originalFetch = globalThis.fetch;
   const restoreEnv = setEnv({ JEV_PLATFORM: "openrouter", OPENROUTER_API_KEY: "sk-or-test" });
   globalThis.fetch = (async () =>
@@ -44,7 +44,7 @@ test("an answer the provider omitted reports 0, but stays distinguishable throug
       questions: { keep_x: { type: "noul", instructions: "Keep?" } },
     });
 
-    assert.equal(res.answers.keep_x.value, 0, "the reporting value falls back to 0");
+    assert.equal(res.answers.keep_x.value, undefined, "no fake zero: an omitted answer is undefined");
     assert.equal(noulProbability(res.answers.keep_x.raw), null, "the distinction survives in raw");
   } finally {
     globalThis.fetch = originalFetch;

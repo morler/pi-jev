@@ -219,7 +219,7 @@ export default function (pi: ExtensionAPI) {
     },
   };
 
-  registerJevTools(pi, jevClient, router, skillRouter);
+  registerJevTools(pi, router, skillRouter);
   registerJevCommands(pi, jevClient, skillRouter, auto, autoModel, compactor, agents, persistSwitch, pruneControl, toolGuard, searchGateControl);
 
   pi.registerTool({

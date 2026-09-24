@@ -3,14 +3,12 @@ import { Type } from "@sinclair/typebox";
 import type { JevClient } from "./jev.js";
 import type { ToolRouter } from "./router.js";
 import type { SkillRouter } from "./skills.js";
-import type { QuestionConfig } from "./types.js";
-import { credentialHint } from "./platform.js";
+import { credentialHint } from "pi-jev-core";
 import { JEV_THRESHOLD } from "./skills.js";
 import { searchGate, type SearchResultItem } from "./search-gate.js";
 
 export function registerJevTools(
   pi: ExtensionAPI,
-  jevClient: JevClient,
   router: ToolRouter,
   skillRouter: SkillRouter
 ): void {
@@ -122,69 +120,6 @@ export function registerJevTools(
     },
   });
 
-  // 3. Typed evaluation tool: jev_evaluate
-  pi.registerTool({
-    name: "jev_evaluate",
-    label: "Jev Evaluate",
-    description:
-      "Ask TypeSafe Jev System One typed questions (choice, noul, score) about structured state. Returns calibrated probabilities.",
-    promptSnippet: "Perform fast calibrated structured decisions and classifications over state",
-    promptGuidelines: [
-      "Use jev_evaluate when you need structured probability, categorical choice, or scored rubric decisions rather than text generation.",
-    ],
-    parameters: Type.Object({
-      state: Type.Any({ description: "Target context, text, or structured JSON to evaluate" }),
-      questions: Type.Record(
-        Type.String(),
-        Type.Object({
-          type: Type.Union([
-            Type.Literal("choice"),
-            Type.Literal("noul"),
-            Type.Literal("score"),
-          ]),
-          instructions: Type.String({ description: "The judgment instruction/question" }),
-          criteria: Type.Optional(Type.Any({ description: "Options, yes/no criterion, or rubric levels" })),
-        })
-      ),
-      model: Type.Optional(Type.String({ description: "Jev model identifier (default: platform Jev model)" })),
-    }),
-    async execute(_toolCallId, params: any, signal, onUpdate) {
-      if (!jevClient.isConfigured()) {
-        throw new Error(
-          `Jev API key is not configured for the ${jevClient.platform} platform. ${credentialHint(jevClient.platform)}.`
-        );
-      }
-
-      onUpdate?.({
-        content: [{ type: "text", text: `Querying Jev (${jevClient.platform}) model...` }],
-        details: {},
-      });
-
-      const questions: Record<string, QuestionConfig> = {};
-      for (const [id, q] of Object.entries(params.questions as Record<string, QuestionConfig>)) {
-        questions[id] = q;
-      }
-
-      const response = await jevClient.evaluate(
-        {
-          state: params.state,
-          questions,
-          model: params.model,
-        },
-        signal
-      );
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(response.answers, null, 2),
-          },
-        ],
-        details: response,
-      };
-    },
-  });
 }
 
 /** Request timeout for one search-gate round, matching the reference gate's 6s. */

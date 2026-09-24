@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { JevClient } from "./jev.js";
 import type { QuestionConfig, JevEvaluationResponse } from "./types.js";
-import { credentialHint } from "./platform.js";
+import { credentialHint } from "pi-jev-core";
 
 const RPC_REQUEST = "subagents:rpc:v1:request";
 const RPC_REPLY = "subagents:rpc:v1:reply:";
@@ -55,11 +55,12 @@ export async function executeJevAgentTask(
       criteria: Array.isArray(params.criteria) ? params.criteria : ["poor", "acceptable", "good"],
     };
   } else {
-    // Default to noul (probability / binary check)
+    // Default to noul (probability / binary check).
+    // No criteria field: pi-jev-core's NoulQuestionConfig has none — the SDK's noul()
+    // takes only instructions, so a pass-through criteria never reached the model anyway.
     questions["judgment"] = {
       type: "noul",
       instructions: params.instructions || params.task || "Evaluate state",
-      criteria: typeof params.criteria === "string" ? params.criteria : undefined,
     };
   }
 

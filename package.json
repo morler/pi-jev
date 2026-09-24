@@ -40,7 +40,7 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
-    "@typesafe-ai/sdk": "^0.6.0"
+    "pi-jev-core": "file:../pi-jev-core"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",

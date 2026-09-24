@@ -10,7 +10,7 @@ import { designEvaluation } from "./designer.js";
 import type { JevEvaluationRequest } from "./types.js";
 import { JEV_TOOL_NAMES, isJevTool } from "./types.js";
 import { JEV_THRESHOLD } from "./skills.js";
-import { credentialHint } from "./platform.js";
+import { credentialHint } from "pi-jev-core";
 import { SWITCHES, configPath, envOverrides, envShadowed, type JevConfigKey } from "./config.js";
 
 /** What the in-place pruning controls need from a command or tool context. */
@@ -163,10 +163,11 @@ export function registerJevCommands(
             (rest ? `Jev Evaluation (${res.elapsedMs}ms):\n` : `Jev Test Successful (${res.elapsedMs}ms):\n`) +
               Object.entries(res.answers)
                 .map(([id, ans]) => {
+                  const shown = ans.value ?? "no answer";
                   const value =
                     ans.type === "noul"
-                      ? `${ans.value}${typeof ans.value === "number" ? ` (${(ans.value * 100).toFixed(0)}% yes)` : ""}`
-                      : `${ans.value}${ans.confidence !== undefined ? ` (confidence: ${ans.confidence})` : ""}`;
+                      ? `${shown}${typeof ans.value === "number" ? ` (${(ans.value * 100).toFixed(0)}% yes)` : ""}`
+                      : `${shown}${ans.confidence !== undefined ? ` (confidence: ${ans.confidence})` : ""}`;
                   return `• ${id}: ${value}`;
                 })
                 .join("\n"),

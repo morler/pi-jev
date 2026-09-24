@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The Jev judgment core (client, platform routing, credentials, answer normalization) moved to the separate `pi-jev-core` package: `src/jev.ts` is a re-export barrel, `src/platform.ts` is gone, and `jev_evaluate` is registered by pi-jev-core instead of this extension. The behavior tools (`jev_find_tools`, `jev_find_skill`, `jev_compact_now`, `jev_search_gate`) and every Jev-backed feature keep working unchanged. `JevAnswerResult.value` is now `undefined` when the provider gave no answer instead of a fake `0` (read `noulProbability(raw)` to tell them apart). pi-jev-core is consumed via a `file:` dependency until it publishes to the registry.
 - Jev compaction is on by default: installing pi-jev makes `/compact` (manual, threshold, and overflow) produce the Jev summary instead of Pi's built-in one. Pi's summarizer remains the fail-open fallback when Jev is unconfigured or fails, and `/jev compact off` or `PI_JEV_COMPACT=0` restores the opt-in behavior.
 
 ### Fixed

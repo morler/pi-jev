@@ -6,7 +6,7 @@ Semantic tool routing and typed decisions for the [Pi coding agent](https://pi.d
 
 - **Semantic Tool Router (`jev_find_tools`)**: Automatically searches registered inactive tools and additively activates only the tools needed for the user's specific prompt or workflow.
 - **Skill Discovery (`jev_find_skill`)**: Semantically matches and suggests the most relevant specialized agent skills (`SKILL.md`) for any task without cluttering prompt context.
-- **Typed Judgments (`jev_evaluate`)**: Run fast, calibrated System One decisions directly from the agent using Choice, Noul (yes/no probability), and Score primitives.
+- **Typed Judgments (`jev_evaluate`)**: Run fast, calibrated System One decisions directly from the agent using Choice, Noul (yes/no probability), and Score primitives. The tool itself is registered by the separate [pi-jev-core](https://github.com/morler/pi-jev-core) package — this extension only consumes its judgment core.
 - **Four Jev API Platforms**: Reach Jev directly on the TypeSafe API or through OpenRouter, Cloudflare AI Gateway, or Vercel AI Gateway via `JEV_PLATFORM`. Tools, skills, gates, typed agent, and auto modes all follow the selected platform.
 - **Dynamic Evaluations (`/jev test <prompt>`)**: The active model designs the Jev question schema for a free-form prompt, then Jev evaluates it.
 - **Automatic Mode (opt-in)**: `--jev-auto` / `PI_JEV_AUTO=1` / `/jev auto on` routes tools and suggests skills before every prompt. Off by default.
@@ -17,7 +17,7 @@ Semantic tool routing and typed decisions for the [Pi coding agent](https://pi.d
 - **Agent Orchestration & Typed Agent**: `/jev agents <task>` dispatches `pi-subagents` orchestration; register `agent: "jev"` in workflows for instant sub-second typed judgments without LLM overhead.
 - **Post-Run Gate Check (`jev-gate` CLI)**: Fast binary for subagent `gate` parameters (`npx pi-jev-gate -c "criteria"`). Checks git diff / output and exits 0 on pass or 1 on fail.
 - **On-Demand & Safe**: Runs when called. No unsolicited per-turn API token costs. Fails closed safely: if Jev is unreachable or unconfigured, tool routing does not blindly activate unjudged tools and reports zero confidence on keyword fallbacks.
-- **Cost Clarity**: Tool routing (`jev_find_tools`, `/jev auto`), skill discovery (`jev_find_skill`), evaluations (`jev_evaluate`), Jev subagents (`agent: "jev"`), and gate checks (`pi-jev-gate`) consume a Jev System One request. Auto-model spends one extra Jev request per prompt to pick the model tier; the topology fallback stays local.
+- **Cost Clarity**: Tool routing (`jev_find_tools`, `/jev auto`), skill discovery (`jev_find_skill`), evaluations (`jev_evaluate`, served by pi-jev-core), Jev subagents (`agent: "jev"`), and gate checks (`pi-jev-gate`) consume a Jev System One request. Auto-model spends one extra Jev request per prompt to pick the model tier; the topology fallback stays local.
 
 ## Installation
 
@@ -242,7 +242,7 @@ Used by the agent to find relevant specialized workflows and instructions for co
 ```
 
 ### 4. `jev_evaluate`
-Used for structured decisions, classifications, triage, and scoring.
+Registered by [pi-jev-core](https://github.com/morler/pi-jev-core), not by this extension. Used for structured decisions, classifications, triage, and scoring.
 
 ### 5. `jev_search_gate`
 One round of search decisions after a web or API search: Jev ranks which results are worth reading, drops results carrying injected instructions, judges whether the evidence already answers the question, and picks the next query from your own candidates. Fails closed: when Jev is unavailable nothing is shortlisted (`selected_ids` empty), the local screen still reports what it caught, and `decision` is `"unknown"`.

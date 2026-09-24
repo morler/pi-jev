@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import { execSync } from "node:child_process";
 import { JevClient } from "./jev.js";
 import type { JevAnswerResult } from "./types.js";
-import { credentialHint } from "./platform.js";
+import { credentialHint } from "pi-jev-core";
 
 export interface GateOptions {
   criteria: string;
