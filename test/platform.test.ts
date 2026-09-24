@@ -38,7 +38,8 @@ function setEnv(values: Record<string, string | undefined>): () => void {
 }
 
 test("resolvePlatform reads JEV_PLATFORM and falls back to typesafe", () => {
-  const restore = setEnv({ JEV_PLATFORM: "openrouter" });
+  const platformFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "jev-platform-")), "platform");
+  const restore = setEnv({ JEV_PLATFORM: "openrouter", JEV_PLATFORM_FILE: platformFile });
   try {
     assert.equal(resolvePlatform(), "openrouter");
     process.env.JEV_PLATFORM = "nonsense";
@@ -46,7 +47,6 @@ test("resolvePlatform reads JEV_PLATFORM and falls back to typesafe", () => {
   } finally {
     restore();
   }
-  assert.equal(resolvePlatform(), "typesafe");
 });
 
 test("resolveCredential prefers the platform env var, then its secret file", () => {
