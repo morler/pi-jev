@@ -29,7 +29,7 @@ pi-jev-tools judges nothing by itself: every Jev call — the `JevClient`, platf
 ```bash
 # from the directory that will hold both repos (they must be siblings)
 git clone https://github.com/morler/pi-jev-core.git
-git clone https://github.com/morler/pi-jev.git pi-jev-tools
+git clone https://github.com/morler/pi-jev-tools.git
 cd pi-jev-tools && npm install
 cd ..
 pi install ./pi-jev-tools
@@ -41,7 +41,7 @@ Once pi-jev-core is published to npm, these work on their own:
 
 ```bash
 pi install npm:pi-jev-tools
-pi install git:github.com/TheoOliveira/pi-jev
+pi install git:github.com/morler/pi-jev-tools
 ```
 
 pi-jev-core is itself a standalone Pi extension (it registers the `jev_evaluate` tool); installing pi-jev-tools brings it along through the dependency, so you never install both by hand.

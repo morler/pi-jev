@@ -59,12 +59,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/TheoOliveira/pi-jev.git"
+    "url": "git+https://github.com/morler/pi-jev-tools.git"
   },
   "bugs": {
-    "url": "https://github.com/TheoOliveira/pi-jev/issues"
+    "url": "https://github.com/morler/pi-jev-tools/issues"
   },
-  "homepage": "https://github.com/TheoOliveira/pi-jev#readme",
+  "homepage": "https://github.com/morler/pi-jev-tools#readme",
   "author": "Theophilo Damiao",
   "license": "MIT"
 }
