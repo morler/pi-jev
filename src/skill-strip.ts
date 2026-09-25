@@ -16,7 +16,7 @@ const BLOCKS: Array<[open: string, close: string]> = [
 export function skillStripNote(skillCount: number): string {
   return (
     skillCount + " Agent Skills are installed; their catalog was removed to save context. " +
-    "Call jev_find_skill with a task description to discover one."
+    "Call jev_find_skill with a task description to discover one, or call jev_load_skill directly when you know the name."
   );
 }
 

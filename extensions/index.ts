@@ -382,7 +382,7 @@ export default function (pi: ExtensionAPI) {
         content:
           "Jev auto-matched skill(s) for this task. Load the matching SKILL.md before proceeding:\n" +
           result.skills
-            .map((s) => `• /skill:${s.name.replace(/^skill:/, "")} (P=${s.probability.toFixed(2)})`)
+            .map((s) => `• /skill:${s.name.replace(/^(?:skill:)+/, "")} (P=${s.probability.toFixed(2)})`)
             .join("\n"),
       },
     };

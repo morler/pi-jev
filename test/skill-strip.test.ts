@@ -28,7 +28,7 @@ test("strips the modern catalog and appends the discovery note with the skill co
   assert.ok(!out.includes("fleet"), "skill entries must be gone");
   assert.ok(out.includes(skillStripNote(27)));
   assert.ok(out.includes("jev_find_skill"), "note must name the discovery tool");
-  assert.ok(!out.includes("jev_load_skill"), "note must not name tools this branch does not register");
+  assert.ok(out.includes("jev_load_skill"), "note must name the direct-path tool now that this branch registers it");
   assert.ok(out.startsWith("You are a coding agent."), "prompt before the block must survive");
   assert.ok(out.trimEnd().endsWith("Follow the user's instructions."), "prompt after the block must survive");
 });
