@@ -1,7 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { SkillRouter, type SkillMetadata } from "../src/skills.js";
 import { JevClient } from "../src/jev.js";
+
+function mockPi(commands: object[]): ExtensionAPI {
+  // SAFETY: tests provide only the getCommands member consumed by SkillRouter.
+  return { getCommands: () => commands } as unknown as ExtensionAPI;
+}
 
 test("SkillRouter shortlists skills based on query terms", () => {
   const mockSkills: SkillMetadata[] = [
@@ -11,16 +20,31 @@ test("SkillRouter shortlists skills based on query terms", () => {
     { name: "accessibility", description: "Audit and improve WCAG accessibility" },
   ];
 
-  const mockPi: any = {
-    getCommands: () => [],
-  };
-
-  const jevClient = new JevClient();
-  const router = new SkillRouter(mockPi, jevClient);
-
+  const router = new SkillRouter(mockPi([]), new JevClient());
   const candidates = router.shortlist(mockSkills, "fix git rebase conflicts");
   assert.equal(candidates.length, 4);
   assert.equal(candidates[0].name, "resolving-merge-conflicts");
+});
+
+test("SkillRouter loads enabled SKILL.md files with normalized names", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-jev-skill-"));
+  const skillDir = path.join(root, "fleet");
+  fs.mkdirSync(skillDir);
+  fs.writeFileSync(path.join(skillDir, "SKILL.md"), "# Fleet workflow");
+
+  const router = new SkillRouter(
+    mockPi([{
+      name: "fleet",
+      description: "Fleet workflow",
+      source: "skill",
+      sourceInfo: { path: skillDir },
+    }]),
+    { isConfigured: () => false } as unknown as JevClient,
+  );
+
+  const loaded = router.loadSkills(["Fleet"]);
+  assert.equal(loaded[0].content, "# Fleet workflow");
+  assert.equal(loaded[0].error, undefined);
 });
 
 test("SkillRouter fallback returns matching keyword candidates with 0 probability", async () => {
@@ -29,22 +53,18 @@ test("SkillRouter fallback returns matching keyword candidates with 0 probabilit
     { name: "accessibility", description: "Audit web accessibility" },
   ];
 
-  const mockPi: any = {
-    getCommands: () =>
-      mockSkills.map((s) => ({
-        name: s.name,
-        description: s.description,
-        source: "skill",
-      })),
-  };
+  const router = new SkillRouter(
+    mockPi(mockSkills.map((skill) => ({
+      name: skill.name,
+      description: skill.description,
+      source: "skill",
+    }))),
+    { isConfigured: () => false } as unknown as JevClient,
+  );
 
-  // Stub unconfigured client: local runs may have a real API key or secret file.
-  const jevClient = { isConfigured: () => false } as unknown as JevClient;
-  const router = new SkillRouter(mockPi, jevClient);
-
-  const res = await router.findSkills("make web accessible");
-  assert.equal(res.fallbackUsed, true);
-  assert.equal(res.recommended.length, 1);
-  assert.equal(res.recommended[0].name, "accessibility");
-  assert.equal(res.recommended[0].probability, 0);
+  const result = await router.findSkills("make web accessible");
+  assert.equal(result.fallbackUsed, true);
+  assert.equal(result.recommended.length, 1);
+  assert.equal(result.recommended[0].name, "accessibility");
+  assert.equal(result.recommended[0].probability, 0);
 });

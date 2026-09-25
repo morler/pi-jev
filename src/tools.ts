@@ -120,6 +120,32 @@ export function registerJevTools(
     },
   });
 
+  // 3. Load selected skill instructions without another Jev request.
+  pi.registerTool({
+    name: "jev_load_skill",
+    label: "Jev Skill Loader",
+    description: "Load one or more enabled SKILL.md files by name without calling Jev.",
+    promptSnippet: "Load the full instructions for selected skills",
+    promptGuidelines: [
+      "Use jev_load_skill after jev_find_skill selects a workflow, or when the skill name is already known.",
+    ],
+    parameters: Type.Object({
+      names: Type.Array(Type.String({ description: "An enabled skill name." }), {
+        minItems: 1,
+        maxItems: 5,
+      }),
+    }),
+    async execute(_toolCallId, params: { names: string[] }, _signal, _onUpdate, ctx) {
+      const loaded = skillRouter.loadSkills(params.names, ctx);
+      const text = loaded
+        .map((skill) => skill.content
+          ? `## ${skill.name}\\n\\n${skill.content}`
+          : `## ${skill.name}\\n\\nUnable to load: ${skill.error ?? "unknown error"}`)
+        .join("\\n\\n");
+      return { content: [{ type: "text", text }], details: { loaded } };
+    },
+  });
+
 }
 
 /** Request timeout for one search-gate round, matching the reference gate's 6s. */
