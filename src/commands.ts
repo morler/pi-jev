@@ -45,11 +45,13 @@ export function registerJevCommands(
   persistSwitch?: (key: JevConfigKey, value: boolean) => boolean,
   prune?: PruneControl,
   toolGuard?: ToolGuard,
-  searchGate?: { enabled: boolean; setEnabled(enabled: boolean): void }
+  searchGate?: { enabled: boolean; setEnabled(enabled: boolean): void },
+  skillStrip?: { enabled: boolean; setEnabled(enabled: boolean): void }
 ): void {
   const agentMode = agents ?? { enabled: false, setEnabled: () => {}, dispatch: async () => ({ accepted: false, error: "disabled" }) };
   const compactMode = compactor ?? { enabled: false, setEnabled: () => {} };
   const modelMode = autoModel ?? { enabled: false, setEnabled: () => {} };
+  const stripMode = skillStrip ?? { enabled: false, setEnabled: () => {} };
 
   /** Persists a toggle and returns the note to append to the notice. */
   const saveNotice = (key: JevConfigKey, value: boolean): string => {
@@ -72,7 +74,7 @@ export function registerJevCommands(
       const sub = (tokens[0] ?? "").toLowerCase();
       const rest = tokens.slice(1).join(" ");
       const usage =
-        "Available options: /jev status, /jev skills [query], /jev test [prompt], /jev enable, /jev disable, /jev auto [on|off], /jev auto-model [on|off], /jev compact [on|off|status|reset|now], /jev auto-agents [on|off], /jev tool-guard [on|off], /jev search-gate [on|off], /jev agents [task]";
+        "Available options: /jev status, /jev skills [query], /jev test [prompt], /jev enable, /jev disable, /jev auto [on|off], /jev auto-model [on|off], /jev compact [on|off|status|reset|now], /jev auto-agents [on|off], /jev tool-guard [on|off], /jev search-gate [on|off], /jev skill-strip [on|off], /jev agents [task]";
 
       if (sub === "status" || sub === "") {
         const origin = jevClient.getKeyOrigin();
@@ -94,6 +96,7 @@ export function registerJevCommands(
             `• Auto-model: ${modelMode.enabled ? "on" : "off"}\n` +
             `• Tool guard: ${guardMode.enabled ? "on" : "off"}\n` +
             `• Search gate: ${gateMode.enabled ? "on" : "off"}\n` +
+            `• Skill strip: ${stripMode.enabled ? "on" : "off"}\n` +
             `• Jev compaction: ${compactMode.enabled ? "on" : "off"}\n` +
             (prune ? `• ${prune.counts()}\n` : "") +
             `• Agent orchestration: ${agentMode.enabled ? "on" : "off"}\n` +
@@ -242,6 +245,18 @@ export function registerJevCommands(
         const enabled = arg === "on" ? true : arg === "off" ? false : !gateMode.enabled;
         gateMode.setEnabled(enabled);
         ctx.ui.notify(`Jev search gate ${enabled ? "enabled" : "disabled"}.${saveNotice("searchGate", enabled)}`, "info");
+        return;
+      }
+
+      if (sub === "skill-strip" || sub === "skillstrip" || sub === "strip") {
+        const arg = rest.toLowerCase();
+        if (arg !== "" && arg !== "on" && arg !== "off") {
+          ctx.ui.notify(`Unknown /jev skill-strip argument "${rest}". ${usage}`, "warning");
+          return;
+        }
+        const enabled = arg === "on" ? true : arg === "off" ? false : !stripMode.enabled;
+        stripMode.setEnabled(enabled);
+        ctx.ui.notify(`Jev skill strip ${enabled ? "enabled" : "disabled"}.${saveNotice("skillStrip", enabled)}`, "info");
         return;
       }
 

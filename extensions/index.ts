@@ -13,6 +13,7 @@ import { AgentOrchestrator } from "../src/orchestrator.js";
 import { JevAgentHandler } from "../src/agent.js";
 import { loadConfig, loadModelPool, resolveSwitch, saveConfig, type JevConfigKey } from "../src/config.js";
 import { ToolGuard } from "../src/tool-guard.js";
+import { stripSkillCatalog } from "../src/skill-strip.js";
 
 export default function (pi: ExtensionAPI) {
   const saved = loadConfig();
@@ -53,6 +54,12 @@ export default function (pi: ExtensionAPI) {
     default: flagDefault("autoModel"),
   });
 
+  pi.registerFlag("jev-skill-strip", {
+    description: "Remove the Agent Skills catalog from the system prompt and point discovery at jev_find_skill",
+    type: "boolean",
+    default: flagDefault("skillStrip"),
+  });
+
   pi.registerFlag("jev-auto", {
     description:
       "Automatically route Pi tools and suggest skills with Jev on every prompt (also via PI_JEV_AUTO=1)",
@@ -82,6 +89,14 @@ export default function (pi: ExtensionAPI) {
     },
   };
   registerSearchGateTool(pi, jevClient, () => searchGateControl.enabled);
+
+  /** Catalog removal is prompt hygiene; it runs whether or not auto mode is on. */
+  const skillStrip = {
+    enabled: Boolean(pi.getFlag("jev-skill-strip")),
+    setEnabled(value: boolean) {
+      this.enabled = value;
+    },
+  };
 
   const agentHandler = new JevAgentHandler(pi, jevClient);
   agentHandler.install();
@@ -220,7 +235,7 @@ export default function (pi: ExtensionAPI) {
   };
 
   registerJevTools(pi, router, skillRouter);
-  registerJevCommands(pi, jevClient, skillRouter, auto, autoModel, compactor, agents, persistSwitch, pruneControl, toolGuard, searchGateControl);
+  registerJevCommands(pi, jevClient, skillRouter, auto, autoModel, compactor, agents, persistSwitch, pruneControl, toolGuard, searchGateControl, skillStrip);
 
   pi.registerTool({
     name: "jev_compact_now",
@@ -331,7 +346,15 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
-    if (!auto.enabled) return;
+    // Catalog removal runs regardless of auto mode; without the note the model would
+    // not know skills exist, so the note is what keeps jev_find_skill discoverable.
+    let systemPrompt = event.systemPrompt;
+    if (skillStrip.enabled) {
+      systemPrompt = stripSkillCatalog(event.systemPrompt, event.systemPromptOptions.skills?.length ?? 0);
+    }
+    const promptChanged = systemPrompt !== event.systemPrompt;
+
+    if (!auto.enabled) return promptChanged ? { systemPrompt } : undefined;
 
     if (agents.enabled && /\b(architecture|refactor|security review|entire repo|parallel|multiple agents|complex migration)\b/i.test(event.prompt)) {
       await agents.dispatch(event.prompt, ctx, true);
@@ -352,13 +375,14 @@ export default function (pi: ExtensionAPI) {
     if (result.skills.length === 0) return;
 
     return {
+      systemPrompt: promptChanged ? systemPrompt : undefined,
       message: {
         customType: "jev-auto",
         display: true,
         content:
           "Jev auto-matched skill(s) for this task. Load the matching SKILL.md before proceeding:\n" +
           result.skills
-            .map((s) => `• /skill:${s.name} (P=${s.probability.toFixed(2)})`)
+            .map((s) => `• /skill:${s.name.replace(/^skill:/, "")} (P=${s.probability.toFixed(2)})`)
             .join("\n"),
       },
     };
