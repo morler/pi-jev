@@ -32,6 +32,8 @@ export function stripSkillCatalog(systemPrompt: string, skillCount: number): str
   for (const [openTag, closeTag] of BLOCKS) {
     const pattern = new RegExp("^" + openTag + "[\\s\\S]*?^" + closeTag + "[ \\t]*$", "gm");
     for (;;) {
+      // `out` was rewritten by the previous iteration: the g-flag cursor is stale.
+      pattern.lastIndex = 0;
       const match = pattern.exec(out);
       if (!match) break;
       // Swallow trailing blank lines, then keep exactly one blank line around the

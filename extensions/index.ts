@@ -366,13 +366,13 @@ export default function (pi: ExtensionAPI) {
     }
 
     const result = await auto.route(event.prompt, ctx, ctx.signal);
-    if (!result.ran) return;
+    if (!result.ran) return promptChanged ? { systemPrompt } : undefined;
 
     if (result.activated.length > 0) {
       ctx.ui.setStatus("jev", `jev: auto (+${result.activated.length} tools)`);
     }
 
-    if (result.skills.length === 0) return;
+    if (result.skills.length === 0) return promptChanged ? { systemPrompt } : undefined;
 
     return {
       systemPrompt: promptChanged ? systemPrompt : undefined,

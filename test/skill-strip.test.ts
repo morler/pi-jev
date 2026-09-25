@@ -61,6 +61,17 @@ test("a full line-anchored example block in prose is still stripped", () => {
   assert.ok(out.includes(skillStripNote(2)));
 });
 
+test("strips both blocks when the same tag appears twice", () => {
+  // The first block must outgrow the note (~200 chars) so the stale g-flag lastIndex
+  // would land past the second block's opening tag in the rewritten string.
+  const filler = "x".repeat(300);
+  const twice = "Top.\n<skills>\n" + filler + "\n</skills>\nmiddle\n<skills>\nblock two entry\n</skills>\nBottom.";
+  const out = stripSkillCatalog(twice, 5);
+  assert.ok(!out.includes("block one entry") && !out.includes("block two entry"), "both same-tag blocks must go");
+  assert.equal(out.split(skillStripNote(5)).length - 1, 1, "note appears exactly once");
+  assert.ok(out.includes("Top.") && out.includes("Bottom."));
+});
+
 test("leaves a prompt without any catalog untouched", () => {
   assert.equal(stripSkillCatalog("No catalog here.", 27), "No catalog here.");
   assert.equal(stripSkillCatalog("", 0), "");
