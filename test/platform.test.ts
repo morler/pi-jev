@@ -38,7 +38,8 @@ function setEnv(values: Record<string, string | undefined>): () => void {
 }
 
 test("resolvePlatform reads JEV_PLATFORM and falls back to typesafe", () => {
-  const platformFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "jev-platform-")), "platform");
+  const platformDir = fs.mkdtempSync(path.join(os.tmpdir(), "jev-platform-"));
+  const platformFile = path.join(platformDir, "platform");
   const restore = setEnv({ JEV_PLATFORM: "openrouter", JEV_PLATFORM_FILE: platformFile });
   try {
     assert.equal(resolvePlatform(), "openrouter");
@@ -46,6 +47,7 @@ test("resolvePlatform reads JEV_PLATFORM and falls back to typesafe", () => {
     assert.equal(resolvePlatform(), "typesafe");
   } finally {
     restore();
+    fs.rmSync(platformDir, { recursive: true, force: true });
   }
 });
 
