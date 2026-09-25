@@ -69,7 +69,8 @@ export function registerJevTools(
     name: "jev_find_skill",
     label: "Jev Skill Finder",
     description:
-      "Find and recommend the best matching agent skills for a specific task or problem using TypeSafe Jev semantic evaluation.",
+      "Find and recommend the best matching agent skills for a specific task or problem using TypeSafe Jev semantic evaluation. " +
+      "The installed skills' catalog may be hidden from the system prompt; this tool (with jev_load_skill) is the discovery path — call it before starting specialized work.",
     promptSnippet: "Discover specialized skills/workflows relevant to current task",
     promptGuidelines: [
       "Use jev_find_skill when working on specialized tasks (e.g. testing, UI design, animations, security reviews, git conflicts) to locate the relevant SKILL.md guide.",

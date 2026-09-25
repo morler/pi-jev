@@ -13,7 +13,7 @@ import { AgentOrchestrator } from "../src/orchestrator.js";
 import { JevAgentHandler } from "../src/agent.js";
 import { loadConfig, loadModelPool, resolveSwitch, saveConfig, type JevConfigKey } from "../src/config.js";
 import { ToolGuard } from "../src/tool-guard.js";
-import { stripSkillCatalog } from "../src/skill-strip.js";
+import { stripSkillCatalogFromEvent } from "../src/skill-strip.js";
 
 export default function (pi: ExtensionAPI) {
   const saved = loadConfig();
@@ -350,7 +350,10 @@ export default function (pi: ExtensionAPI) {
     // not know skills exist, so the note is what keeps jev_find_skill discoverable.
     let systemPrompt = event.systemPrompt;
     if (skillStrip.enabled) {
-      systemPrompt = stripSkillCatalog(event.systemPrompt, event.systemPromptOptions.skills?.length ?? 0);
+      // Handles both generations: string strip on pi <= 0.85, in-place
+      // systemPromptOptions.skills=[] (+ note section) on pi >= 0.87.
+      const stripped = stripSkillCatalogFromEvent(event);
+      if (stripped.systemPrompt !== undefined) systemPrompt = stripped.systemPrompt;
     }
     const promptChanged = systemPrompt !== event.systemPrompt;
 

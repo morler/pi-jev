@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { skillStripNote, stripSkillCatalog } from "../src/skill-strip.js";
+import { skillStripNote, stripSkillCatalog, stripSkillCatalogFromEvent } from "../src/skill-strip.js";
 
 const MODERN = [
   "You are a coding agent.",
@@ -91,4 +91,31 @@ test("an unterminated catalog is left alone rather than truncating the prompt", 
 test("note text interpolates the count and stays one line", () => {
   assert.match(skillStripNote(0), /^0 Agent Skills/);
   assert.ok(!skillStripNote(5).includes("\n"));
+});
+
+test("legacy host: catalog in the string is stripped, options left untouched", () => {
+  const options = { skills: [{ name: "fleet" }] };
+  const result = stripSkillCatalogFromEvent({ systemPrompt: MODERN, systemPromptOptions: options });
+  assert.ok(result.systemPrompt?.includes(skillStripNote(1)));
+  assert.equal(result.clearedOptionsSkills, false);
+  assert.equal(result.skillCount, 1);
+  assert.equal(options.skills.length, 1, "string path must not mutate options");
+});
+
+test("modern host: catalog absent from the string, options cleared in place with a note section", () => {
+  const options = { skills: [{ name: "a" }, { name: "b" }], sections: {} as Record<string, string> };
+  const result = stripSkillCatalogFromEvent({ systemPrompt: "No catalog here.", systemPromptOptions: options });
+  assert.equal(result.systemPrompt, undefined);
+  assert.equal(result.clearedOptionsSkills, true);
+  assert.equal(result.skillCount, 2);
+  assert.deepEqual(options.skills, []);
+  assert.equal(options.sections.jev_skills_note, skillStripNote(2));
+});
+
+test("no skills and no catalog: nothing is mutated", () => {
+  const options = { skills: [] as unknown[] };
+  const result = stripSkillCatalogFromEvent({ systemPrompt: "plain", systemPromptOptions: options });
+  assert.equal(result.systemPrompt, undefined);
+  assert.equal(result.clearedOptionsSkills, false);
+  assert.deepEqual(options.skills, []);
 });
