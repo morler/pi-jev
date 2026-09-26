@@ -357,15 +357,16 @@ export default function (pi: ExtensionAPI) {
     }
     const promptChanged = systemPrompt !== event.systemPrompt;
 
+    // Auto-model routes independently of auto mode: each opt-in switch gates only itself.
+    const modelResult = await autoModel.route(event.prompt, ctx, { hasImages: Boolean(event.images?.length) });
+    if (modelResult.changed) {
+      ctx.ui.setStatus("jev", `jev: ${modelResult.tier} → ${modelResult.model?.id ?? "model"}`);
+    }
+
     if (!auto.enabled) return promptChanged ? { systemPrompt } : undefined;
 
     if (agents.enabled && /\b(architecture|refactor|security review|entire repo|parallel|multiple agents|complex migration)\b/i.test(event.prompt)) {
       await agents.dispatch(event.prompt, ctx, true);
-    }
-
-    const modelResult = await autoModel.route(event.prompt, ctx, { hasImages: Boolean(event.images?.length) });
-    if (modelResult.changed) {
-      ctx.ui.setStatus("jev", `jev: ${modelResult.tier} → ${modelResult.model?.id ?? "model"}`);
     }
 
     const result = await auto.route(event.prompt, ctx, ctx.signal);
