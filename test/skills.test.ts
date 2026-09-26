@@ -68,3 +68,23 @@ test("SkillRouter fallback returns matching keyword candidates with 0 probabilit
   assert.equal(result.recommended[0].name, "accessibility");
   assert.equal(result.recommended[0].probability, 0);
 });
+
+test("SkillRouter preserves string probabilities from Jev", async () => {
+  const router = new SkillRouter(
+    mockPi([{
+      name: "typesafe-ai",
+      description: "Build with TypeSafe AI",
+      source: "skill",
+    }]),
+    {
+      isConfigured: () => true,
+      evaluate: async () => ({
+        answers: { "typesafe-ai": { type: "noul", value: 0.91 as unknown as string, raw: { probability: "0.91" } } },
+      }),
+    } as unknown as JevClient,
+  );
+
+  const result = await router.findSkills("build with TypeSafe AI");
+  assert.equal(result.fallbackUsed, false);
+  assert.equal(result.recommended[0].probability, 0.91);
+});

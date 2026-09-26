@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { ToolRouter } from "../src/router.js";
 import { JEV_THRESHOLD } from "../src/skills.js";
 import { JevClient } from "../src/jev.js";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 test("ToolRouter shortlists inactive tools correctly using local keywords", () => {
   const mockTools = [
@@ -90,11 +91,11 @@ test("ToolRouter never offers its own jev tools as candidates", async () => {
 });
 
 test("ToolRouter accepts a probability exactly at the shared threshold and rejects below it", async () => {
-  const withProbability = (value: number | undefined) => {
+  const withProbability = (value: number | string | undefined) => {
     const jevClient = {
       isConfigured: () => value !== undefined,
       evaluate: async () => ({
-        answers: value === undefined ? {} : { sqlite_query: { type: "noul", value } },
+        answers: value === undefined ? {} : { sqlite_query: { type: "noul", value, raw: { noul: value } } },
         model: "m",
         elapsedMs: 1,
       }),
@@ -113,6 +114,28 @@ test("ToolRouter accepts a probability exactly at the shared threshold and rejec
 
   const belowCutoff = await withProbability(JEV_THRESHOLD - 0.01).findAndActivate("query sqlite");
   assert.deepEqual(belowCutoff.activated, []);
+});
+
+test("ToolRouter preserves string probabilities from Jev", async () => {
+  // Regression: string probabilities (e.g. "0.91") used to read as 0.
+  const { ToolRouter } = await import("../src/router.js");
+  const jevClient = {
+    isConfigured: () => true,
+    evaluate: async () => ({
+      answers: { sqlite_query: { type: "noul", value: "0.91", raw: { noul: "0.91" } } },
+      model: "m",
+      elapsedMs: 1,
+    }),
+  } as unknown as JevClient;
+  const pi = {
+    getAllTools: () => [{ name: "sqlite_query", description: "Query sqlite" }],
+    getActiveTools: () => [],
+    setActiveTools: () => {},
+  } as unknown as ExtensionAPI;
+  const router = new ToolRouter(pi, jevClient);
+  const result = await router.findAndActivate("query sqlite");
+  assert.deepEqual(result.activated, ["sqlite_query"]);
+  assert.equal(result.fallbackUsed, false);
 });
 
 test("JevClient handles unconfigured state safely without throwing in check", () => {

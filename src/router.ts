@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { JevClient } from "./jev.js";
+import { noulProbability, type JevClient } from "./jev.js";
 import { isJevTool } from "./types.js";
 import type { QuestionConfig } from "./types.js";
 import { JEV_THRESHOLD } from "./skills.js";
@@ -106,7 +106,7 @@ export class ToolRouter {
         );
 
         for (const [toolName, ans] of Object.entries(res.answers)) {
-          const prob = typeof ans.value === "number" ? ans.value : 0;
+          const prob = noulProbability(ans.raw) ?? 0;
           probabilities[toolName] = prob;
           if (prob >= threshold) {
             activated.push(toolName);

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { JevClient } from "./jev.js";
+import { noulProbability, type JevClient } from "./jev.js";
 import type { QuestionConfig } from "./types.js";
 
 /** Single activation cutoff for Jev probabilities. Raise to reduce noise, lower for recall. */
@@ -157,7 +157,7 @@ export class SkillRouter {
         );
         for (const skill of candidates) {
           const answer = result.answers[skill.name];
-          const probability = typeof answer?.value === "number" ? answer.value : 0;
+          const probability = noulProbability(answer?.raw) ?? 0;
           if (probability >= threshold) {
             recommended.push({ ...skill, probability });
           }
